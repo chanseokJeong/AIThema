@@ -1,0 +1,224 @@
+:root {
+  --bg-color: #121212;
+  --card-bg: #1e1e1e;
+  --text-primary: #ffffff;
+  --text-secondary: #aaaaaa;
+  --accent-cyan: #00bcd4;
+  --positive: #ff4d4d;
+  /* Red for rise in Korea */
+  --negative: #4d79ff;
+  /* Blue for fall in Korea */
+  --border-color: #333;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg-color);
+  color: var(--text-primary);
+  font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.app-container {
+  padding: 20px;
+  max-width: 1600px;
+  margin: 0 auto;
+}
+
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 10px;
+}
+
+.app-header h1 {
+  font-size: 1.5rem;
+  color: var(--accent-cyan);
+  margin: 0;
+}
+
+.app-header p {
+  color: var(--text-secondary);
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+/* Grid Layout */
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 15px;
+}
+
+/* Theme Card */
+.theme-card {
+  background-color: var(--card-bg);
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+}
+
+/* Card Header */
+.card-header {
+  padding: 12px;
+  background-color: #252525;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.header-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.theme-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.star-icon {
+  color: gold;
+  font-size: 0.9rem;
+}
+
+.theme-name {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--accent-cyan);
+  background-color: rgba(0, 188, 212, 0.1);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.theme-score {
+  font-weight: 700;
+  font-size: 1.1rem;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background-color: #333;
+  color: white;
+}
+
+.theme-score.positive {
+  color: var(--positive);
+}
+
+.theme-score.negative {
+  color: var(--negative);
+}
+
+.theme-headline {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-top: 4px;
+  border-top: 1px solid #333;
+}
+
+/* Stock List */
+.stock-list {
+  padding: 0;
+  flex: 1;
+}
+
+.stock-item {
+  padding: 10px 12px 28px 12px;
+  /* Added extra bottom padding for bar */
+  border-bottom: 1px solid #2a2a2a;
+  position: relative;
+}
+
+.stock-item:last-child {
+  border-bottom: none;
+}
+
+/* Rate Bar */
+.stock-bar-bg {
+  position: absolute;
+  bottom: 8px;
+  left: 12px;
+  right: 12px;
+  width: auto;
+  height: 12px;
+  background-color: #333;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.stock-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  line-height: 1.4;
+  gap: 10px;
+  /* Enforce gap between items */
+}
+
+.top-row {
+  margin-bottom: 4px;
+}
+
+.stock-name {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: #ddd;
+}
+
+.stock-rate {
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.stock-rate.positive {
+  color: var(--positive);
+}
+
+.stock-rate.negative {
+  color: var(--negative);
+}
+
+.bottom-row {
+  font-size: 0.8rem;
+  color: #888;
+}
+
+.stock-price {
+  color: #ccc;
+}
+
+.stock-amount {
+  text-align: right;
+  min-width: 60px;
+  /* Ensure space for amount */
+}
+
+.stock-time {
+  margin-right: 8px;
+  /* Add spacing */
+  color: #666;
+  font-size: 0.8rem;
+}
+
+.stock-bar {
+  height: 100%;
+  opacity: 0.7;
+}
+
+.stock-bar.positive {
+  background-color: var(--positive);
+}
+
+.stock-bar.negative {
+  background-color: var(--negative);
+}
