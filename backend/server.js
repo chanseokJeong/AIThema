@@ -1,5 +1,7 @@
 const express = require('express');
 const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
 const { fetchNews } = require('./crawler');
 const { analyzeThemes } = require('./analyzer');
 const { fetchMarketData, enrichStockWithHotData, isNoiseStock } = require('./market');
@@ -7,6 +9,84 @@ const { fetchHotStocks } = require('./rising_stocks');
 const { fetchBalancedHotStocks, THEME_SECTORS } = require('./sector_analyzer');
 const { enrichHotStocksWithSector } = require('./sector_crawler');
 const { fetchDiverseNews, fetchStocksFromNews } = require('./news_crawler');
+
+// ===== 로그 파일 설정 =====
+const LOG_DIR = path.join(__dirname, 'logs');
+if (!fs.existsSync(LOG_DIR)) {
+    fs.mkdirSync(LOG_DIR, { recursive: true });
+}
+
+function getLogFileName() {
+    const now = new Date();
+    const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
+    return path.join(LOG_DIR, `server-${dateStr}.log`);
+}
+
+function writeLog(level, message) {
+    const timestamp = new Date().toISOString();
+    const logLine = `[${timestamp}] [${level}] ${message}\n`;
+
+    // 콘솔 출력
+    if (level === 'ERROR') {
+        process.stderr.write(logLine);
+    } else {
+        process.stdout.write(logLine);
+    }
+
+    // 파일에 저장
+    try {
+        fs.appendFileSync(getLogFileName(), logLine);
+    } catch (err) {
+        process.stderr.write(`Failed to write log: ${err.message}\n`);
+    }
+}
+
+// 기존 console.log/error를 래핑
+const originalLog = console.log;
+const originalError = console.error;
+
+console.log = (...args) => {
+    const message = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+    writeLog('INFO', message);
+};
+
+console.error = (...args) => {
+    const message = args.map(a => {
+        if (a instanceof Error) return `${a.message}\n${a.stack}`;
+        if (typeof a === 'object') return JSON.stringify(a);
+        return String(a);
+    }).join(' ');
+    writeLog('ERROR', message);
+};
+
+// ===== 전역 에러 핸들러 (서버 비정상 종료 방지) =====
+process.on('uncaughtException', (err) => {
+    console.error('=== Uncaught Exception ===');
+    console.error('Time:', new Date().toISOString());
+    console.error('Error:', err.message);
+    console.error('Stack:', err.stack);
+    console.error('==========================');
+    // 프로세스를 종료하지 않고 계속 실행
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('=== Unhandled Rejection ===');
+    console.error('Time:', new Date().toISOString());
+    console.error('Reason:', reason);
+    console.error('===========================');
+    // 프로세스를 종료하지 않고 계속 실행
+});
+
+// SIGTERM/SIGINT 시그널 처리 (graceful shutdown)
+process.on('SIGTERM', () => {
+    console.log('SIGTERM received. Shutting down gracefully...');
+    process.exit(0);
+});
+
+process.on('SIGINT', () => {
+    console.log('SIGINT received. Shutting down gracefully...');
+    process.exit(0);
+});
 
 const app = express();
 const port = 3000;
