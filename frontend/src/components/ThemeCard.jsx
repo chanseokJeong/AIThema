@@ -2,6 +2,35 @@ import React from 'react';
 import { calculateThemeScore } from '../utils/calculation';
 import { TrendingUp, TrendingDown, Star } from 'lucide-react';
 
+// 별 등급 컴포넌트
+const StarRating = ({ stars, reason }) => {
+    if (!stars || stars === 0) return null;
+
+    // 별 개수에 따른 색상
+    const getStarColor = (starCount) => {
+        switch (starCount) {
+            case 3: return '#FF6B6B'; // 빨강 (최강 주도주)
+            case 2: return '#FFD700'; // 금색 (강한 테마)
+            case 1: return '#90EE90'; // 연두 (주목)
+            default: return '#FFD700';
+        }
+    };
+
+    const color = getStarColor(stars);
+
+    return (
+        <div
+            className="star-rating"
+            title={reason || '주도주'}
+            style={{ display: 'flex', alignItems: 'center', gap: '1px' }}
+        >
+            {Array.from({ length: stars }).map((_, i) => (
+                <Star key={i} size={14} fill={color} color={color} />
+            ))}
+        </div>
+    );
+};
+
 const ThemeCard = ({ theme, showScore, onToggleDisplay }) => {
     // Use the score from backend if available, otherwise calculate
     const score = theme.score ? theme.score.toFixed(2) : calculateThemeScore(theme.stocks);
@@ -22,7 +51,7 @@ const ThemeCard = ({ theme, showScore, onToggleDisplay }) => {
             <div className="card-header">
                 <div className="header-top">
                     <div className="theme-title" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        {theme.isLeader && <Star size={18} fill="#FFD700" color="#FFD700" />}
+                        <StarRating stars={theme.stars} reason={theme.starReason} />
                         <h3 className="theme-name">{theme.name}</h3>
                     </div>
                     <div
@@ -51,7 +80,7 @@ const ThemeCard = ({ theme, showScore, onToggleDisplay }) => {
                     const isHotStock = Math.abs(stock.rate || 0) >= 10 || (stock.amount || 0) >= maxAmount * 0.8;
 
                     return (
-                        <div key={index} className="stock-item">
+                        <div key={`${stock.name}-${stock.code || index}`} className="stock-item">
                             <div className="stock-row top-row">
                                 <span className="stock-name">
                                     {stock.name}

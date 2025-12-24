@@ -252,23 +252,24 @@ async function updateThemes() {
             };
         }));
 
-        // ⭐ NEW: 주도 테마 선정 (가중치 점수 방식: 등락률 > 거래대금)
-        // 기존: 거래대금 Top 3 -> 변경: (등락률 + 거래대금/1000) 점수 상위 3개
-        // 설명: 반도체(1.5%)가 거래대금만으로 로봇(20%)보다 우위에 서는 것 방지. 등락률 비중 대폭 강화.
-        // 1000억 거래대금 = 1% 등락률 가치로 환산 (거래대금 가중치 낮춤)
-        const sortedByLeaderScore = [...enrichedThemes].sort((a, b) => {
-            const scoreA = (a.score || 0) + ((a.totalVolume || 0) / 1000);
-            const scoreB = (b.score || 0) + ((b.totalVolume || 0) / 1000);
-            return scoreB - scoreA;
+        // ⭐ NEW: 별 등급 시스템 적용 (시간대 + 조건 기반)
+        // - 장 초반(9:00-9:30): 별 부여 안함 (관망)
+        // - 오전장(9:30-11:00): 최대 1성
+        // - 점심~오후(11:00-14:00): 최대 2성
+        // - 장 후반(14:00-15:30): 최대 3성
+        const phase = getMarketPhase();
+        console.log(`Market phase: ${phase}, Max stars: ${MAX_STARS_BY_PHASE[phase]}`);
+
+        const finalThemes = enrichedThemes.map(t => {
+            const rating = calculateStarRating(t);
+            return {
+                ...t,
+                stars: rating.stars,
+                starReason: rating.reason,
+                // 하위 호환성: isLeader는 1성 이상이면 true
+                isLeader: rating.stars >= 1
+            };
         });
-
-        const top3LeaderNames = new Set(sortedByLeaderScore.slice(0, 3).map(t => t.name));
-
-        const finalThemes = enrichedThemes.map(t => ({
-            ...t,
-            // Leader Score Top 3 안에 들고, 점수(등락률)가 플러스인 경우 '주도주' 아이콘 부여
-            isLeader: top3LeaderNames.has(t.name) && t.score > 0
-        }));
 
         // Sort by Score (descending) - 사용자 요청 (점수 높은 순)
         finalThemes.sort((a, b) => b.score - a.score);
@@ -355,19 +356,16 @@ async function updatePrices() {
             };
         }));
 
-        // ⭐ NEW: 주도 테마 선정 (실시간 업데이트 - 가중치 방식 적용)
-        const sortedByLeaderScore = [...enrichedThemes].sort((a, b) => {
-            const scoreA = (a.score || 0) + ((a.totalVolume || 0) / 1000);
-            const scoreB = (b.score || 0) + ((b.totalVolume || 0) / 1000);
-            return scoreB - scoreA;
+        // ⭐ NEW: 별 등급 시스템 적용 (실시간 업데이트)
+        const finalThemes = enrichedThemes.map(t => {
+            const rating = calculateStarRating(t);
+            return {
+                ...t,
+                stars: rating.stars,
+                starReason: rating.reason,
+                isLeader: rating.stars >= 1
+            };
         });
-
-        const top3LeaderNames = new Set(sortedByLeaderScore.slice(0, 3).map(t => t.name));
-
-        const finalThemes = enrichedThemes.map(t => ({
-            ...t,
-            isLeader: top3LeaderNames.has(t.name) && t.score > 0
-        }));
 
         // Sort by Score (descending) - 사용자 요청
         finalThemes.sort((a, b) => b.score - a.score);
@@ -515,6 +513,189 @@ function calculateThemeScore(stocks) {
     return totalWeightedRate / totalVolume;
 }
 
+// ===== 별 등급 시스템 (주도주 판정) =====
+
+/**
+ * 현재 장 시간대 판정
+ * @returns {string} 'PRE_MARKET' | 'OPENING' | 'MORNING' | 'MIDDAY' | 'CLOSING' | 'AFTER_MARKET'
+ */
+function getMarketPhase() {
+    const now = new Date();
+    const hour = now.getHours();
+    const minute = now.getMinutes();
+    const totalMinutes = hour * 60 + minute;
+
+    // 장 시간: 9:00 ~ 15:30 (한국 주식시장)
+    if (totalMinutes < 9 * 60) return 'PRE_MARKET';           // 장전
+    if (totalMinutes < 9 * 60 + 30) return 'OPENING';         // 장 초반 (9:00-9:30) - 관망
+    if (totalMinutes < 11 * 60) return 'MORNING';             // 오전장 (9:30-11:00) - 최대 1성
+    if (totalMinutes < 14 * 60) return 'MIDDAY';              // 점심~오후초반 (11:00-14:00) - 최대 2성
+    if (totalMinutes < 15 * 60 + 30) return 'CLOSING';        // 장 후반 (14:00-15:30) - 최대 3성
+    return 'AFTER_MARKET';                                    // 장 마감 후 - 결과 유지
+}
+
+// 시간대별 최대 부여 가능 별 개수
+const MAX_STARS_BY_PHASE = {
+    'PRE_MARKET': 0,
+    'OPENING': 0,      // 장 초반은 별 부여 안함 (변동성 큼)
+    'MORNING': 1,      // 오전장: 최대 1개
+    'MIDDAY': 2,       // 점심~오후: 최대 2개
+    'CLOSING': 3,      // 장 후반: 최대 3개
+    'AFTER_MARKET': 3  // 장 마감 후: 결과 유지
+};
+
+/**
+ * 1성 조건: "이거 뭔가 움직이네?"
+ * - 상한가 1개 이상 OR
+ * - 10% 이상 급등주 2개 이상 + 평균 등락률 5% 이상 OR
+ * - 3개 이상 종목 모두 7% 이상 상승
+ */
+function isOneStar(theme) {
+    const stocks = theme.stocks || [];
+    const score = theme.score || 0;
+    if (stocks.length === 0) return false;
+
+    const rates = stocks.map(s => s.rate || 0);
+
+    // A. 상한가가 1개라도 있다
+    if (rates.some(r => r >= 29.9)) return true;
+
+    // B. 10% 이상 급등주가 2개 이상 + 평균 등락률 5% 이상
+    if (rates.filter(r => r >= 10).length >= 2 && score >= 5) return true;
+
+    // C. 3개 이상 종목이 모두 7% 이상 상승
+    if (stocks.length >= 3 && rates.every(r => r >= 7)) return true;
+
+    return false;
+}
+
+/**
+ * 2성 조건: "이건 진짜 가는 테마 같은데?"
+ * - 1성 조건 충족 필수
+ * - 추가로 다음 중 2개 이상 충족:
+ *   A. 상한가 종목 존재
+ *   B. 10% 이상 급등주가 절반 이상
+ *   C. 평균 등락률 8% 이상
+ *   D. 총 거래대금 500억 이상
+ *   E. 4개 이상 종목이 동반 상승 (5% 이상)
+ */
+function isTwoStar(theme) {
+    const stocks = theme.stocks || [];
+    const score = theme.score || 0;
+    const totalVolume = theme.totalVolume || 0;
+    if (stocks.length === 0) return false;
+
+    // 1성 조건 충족 필수
+    if (!isOneStar(theme)) return false;
+
+    const rates = stocks.map(s => s.rate || 0);
+    let conditionsMet = 0;
+
+    // A. 상한가 종목 존재
+    if (rates.some(r => r >= 29.9)) conditionsMet++;
+
+    // B. 10% 이상 급등주가 절반 이상
+    if (rates.filter(r => r >= 10).length >= stocks.length / 2) conditionsMet++;
+
+    // C. 평균 등락률 8% 이상
+    if (score >= 8) conditionsMet++;
+
+    // D. 총 거래대금 500억 이상
+    if (totalVolume >= 500) conditionsMet++;
+
+    // E. 4개 이상 종목이 동반 상승 (5% 이상)
+    if (rates.filter(r => r >= 5).length >= 4) conditionsMet++;
+
+    return conditionsMet >= 2;
+}
+
+/**
+ * 3성 조건: "오늘의 확실한 주도주!"
+ * - 2성 조건 충족 필수
+ * - 추가로 다음 중 3개 이상 충족 (매우 엄격):
+ *   A. 상한가 2개 이상
+ *   B. 평균 등락률 12% 이상
+ *   C. 총 거래대금 1000억 이상
+ *   D. 급등주(10% 이상) 비율 70% 이상
+ *   E. 모든 종목 상승 (음수 없음)
+ *   F. 거래대금 분산 양호 (대장주 쏠림 아님)
+ */
+function isThreeStar(theme) {
+    const stocks = theme.stocks || [];
+    const score = theme.score || 0;
+    const totalVolume = theme.totalVolume || 0;
+    if (stocks.length === 0) return false;
+
+    // 2성 조건 충족 필수
+    if (!isTwoStar(theme)) return false;
+
+    const rates = stocks.map(s => s.rate || 0);
+    const amounts = stocks.map(s => s.amount || 0);
+    let conditionsMet = 0;
+
+    // A. 상한가 2개 이상
+    if (rates.filter(r => r >= 29.9).length >= 2) conditionsMet++;
+
+    // B. 평균 등락률 12% 이상
+    if (score >= 12) conditionsMet++;
+
+    // C. 총 거래대금 1000억 이상
+    if (totalVolume >= 1000) conditionsMet++;
+
+    // D. 급등주(10% 이상) 비율 70% 이상
+    if (stocks.length > 0 && rates.filter(r => r >= 10).length / stocks.length >= 0.7) conditionsMet++;
+
+    // E. 모든 종목 상승 (음수 없음)
+    if (rates.every(r => r > 0)) conditionsMet++;
+
+    // F. 거래대금 분산 양호 (대장주 쏠림 아님)
+    const maxAmount = Math.max(...amounts, 1);
+    const avgAmount = stocks.length > 0 ? totalVolume / stocks.length : 0;
+    if (avgAmount > 0 && maxAmount < avgAmount * 3) conditionsMet++;
+
+    return conditionsMet >= 3;
+}
+
+/**
+ * 테마의 별 등급 판정 (시간대 + 조건 기반)
+ * @param {Object} theme - 테마 객체 (stocks, score, totalVolume 포함)
+ * @returns {Object} { stars: number, reason: string }
+ */
+function calculateStarRating(theme) {
+    const phase = getMarketPhase();
+    const maxStars = MAX_STARS_BY_PHASE[phase];
+    const stocks = theme.stocks || [];
+    const score = theme.score || 0;
+
+    // 장 초반이면 별 부여 안함
+    if (maxStars === 0) {
+        return { stars: 0, reason: '장 초반 - 관망 중' };
+    }
+
+    // 기본 조건: 평균 등락률 양수
+    if (score <= 0) {
+        return { stars: 0, reason: '등락률 마이너스' };
+    }
+
+    // 기본 조건: 유효 종목 2개 이상 (완화)
+    if (stocks.length < 2) {
+        return { stars: 0, reason: '종목 수 부족' };
+    }
+
+    // 등급 판정 (높은 등급부터 체크)
+    if (maxStars >= 3 && isThreeStar(theme)) {
+        return { stars: 3, reason: '오늘의 확실한 주도주' };
+    }
+    if (maxStars >= 2 && isTwoStar(theme)) {
+        return { stars: 2, reason: '강한 테마 흐름' };
+    }
+    if (maxStars >= 1 && isOneStar(theme)) {
+        return { stars: 1, reason: '주목할 만한 움직임' };
+    }
+
+    return { stars: 0, reason: '기준 미달' };
+}
+
 // Initial Start
 updateThemes().then(() => {
     // 초기 로드 후 10초마다 가격 업데이트 시작
@@ -526,7 +707,13 @@ setInterval(updateThemes, 5 * 60 * 1000);
 
 // API Endpoints
 app.get('/api/themes', (req, res) => {
-    res.json(cachedThemes);
+    // 갱신 버전 정보와 함께 테마 데이터 반환
+    // 프론트엔드에서 데이터 버전을 추적하여 완전 갱신 여부 판단
+    res.json({
+        themes: cachedThemes,
+        lastUpdated: lastUpdated,
+        version: lastUpdated // 버전 식별자 (타임스탬프 기반)
+    });
 });
 
 app.get('/api/hot-stocks', (req, res) => {
