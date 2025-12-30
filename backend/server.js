@@ -9,6 +9,10 @@ const { fetchHotStocks } = require('./rising_stocks');
 const { fetchBalancedHotStocks, THEME_SECTORS } = require('./sector_analyzer');
 const { enrichHotStocksWithSector } = require('./sector_crawler');
 const { fetchDiverseNews, fetchStocksFromNews } = require('./news_crawler');
+const { fetchTopThemesWithStocks } = require('./theme_crawler');
+const { fetchIPOStocks, isIPOStock } = require('./ipo_crawler');
+const { selectFinalThemes } = require('./theme_selector');
+const { getMarketStatus: getNxtMarketStatus } = require('./naver_api');
 
 // ===== 로그 파일 설정 =====
 const LOG_DIR = path.join(__dirname, 'logs');
@@ -98,6 +102,7 @@ app.use(express.json());
 let cachedThemes = [];
 let cachedHotStocks = [];
 let cachedBalancedHotStocks = [];
+let cachedIPOStocks = [];
 let lastUpdated = 0;
 
 // 1. Theme Update Loop (Hot Stocks + News + AI)
@@ -159,6 +164,44 @@ async function updateThemes() {
 
         cachedHotStocks = enrichedHotStocks;
         console.log(`Total enriched stocks (with news): ${enrichedHotStocks.length}`);
+
+        // Step 2.8: ⭐ NEW - 네이버 테마 페이지에서 테마-종목 매핑 수집 (티마 방식 강화)
+        console.log('Step 2.8: Fetching Naver theme data...');
+        try {
+            const naverThemes = await fetchTopThemesWithStocks(15); // 상위 15개 테마
+            const naverThemeCount = Object.keys(naverThemes).length;
+            console.log(`Naver themes collected: ${naverThemeCount}`);
+
+            // 네이버 테마 종목을 enrichedHotStocks에 병합
+            let naverStockAdded = 0;
+            for (const [themeName, themeData] of Object.entries(naverThemes)) {
+                for (const stock of themeData.stocks) {
+                    if (isNoiseStock(stock.name)) continue;
+                    if (!existingCodes.has(stock.code)) {
+                        enrichedHotStocks.push({
+                            ...stock,
+                            theme: themeName,
+                            source: 'naver_theme'
+                        });
+                        existingCodes.add(stock.code);
+                        naverStockAdded++;
+                    }
+                }
+            }
+            console.log(`Added ${naverStockAdded} stocks from Naver themes`);
+        } catch (naverError) {
+            console.warn('Naver theme fetch failed (non-critical):', naverError.message);
+        }
+
+        // Step 2.9: IPO 종목 수집 (NEW)
+        console.log('Step 2.9: Fetching IPO stocks...');
+        try {
+            const ipoData = await fetchIPOStocks(30); // 30일 이내 신규상장
+            cachedIPOStocks = ipoData.stocks || [];
+            console.log(`IPO stocks collected: ${cachedIPOStocks.length}`);
+        } catch (ipoError) {
+            console.warn('IPO fetch failed (non-critical):', ipoError.message);
+        }
 
         if (allNews.length === 0 && balancedHotStocks.length === 0) {
             console.log('No data found.');
@@ -252,7 +295,16 @@ async function updateThemes() {
             };
         }));
 
-        // ⭐ NEW: 별 등급 시스템 적용 (시간대 + 조건 기반)
+        // Step 6: 최종 테마 선정 (핵심 7개 + 특수 분류 3개 = 최대 10개)
+        console.log('Step 6: Selecting final themes (max 10)...');
+        const selectedThemes = await selectFinalThemes(
+            enrichedThemes,
+            cachedIPOStocks,
+            balancedHotStocks,
+            { maxCoreThemes: 7, maxTotalThemes: 10, themeSectors: THEME_SECTORS }
+        );
+
+        // ⭐ 별 등급 시스템 적용 (시간대 + 조건 기반)
         // - 장 초반(9:00-9:30): 별 부여 안함 (관망)
         // - 오전장(9:30-11:00): 최대 1성
         // - 점심~오후(11:00-14:00): 최대 2성
@@ -260,7 +312,7 @@ async function updateThemes() {
         const phase = getMarketPhase();
         console.log(`Market phase: ${phase}, Max stars: ${MAX_STARS_BY_PHASE[phase]}`);
 
-        const finalThemes = enrichedThemes.map(t => {
+        const finalThemes = selectedThemes.map(t => {
             const rating = calculateStarRating(t);
             return {
                 ...t,
@@ -271,8 +323,14 @@ async function updateThemes() {
             };
         });
 
-        // Sort by Score (descending) - 사용자 요청 (점수 높은 순)
-        finalThemes.sort((a, b) => b.score - a.score);
+        // 핵심 테마는 rankScore 순, 특수 분류는 뒤에 유지
+        finalThemes.sort((a, b) => {
+            // 특수 분류는 항상 뒤로
+            if (a.isSpecial && !b.isSpecial) return 1;
+            if (!a.isSpecial && b.isSpecial) return -1;
+            // 같은 타입이면 rankScore 또는 score 순
+            return (b.rankScore || b.score || 0) - (a.rankScore || a.score || 0);
+        });
 
         cachedThemes = finalThemes;
         lastUpdated = Date.now();
@@ -456,7 +514,7 @@ async function addMissingMajorThemes(analyzedThemes, balancedHotStocks) {
             }
         }
 
-        if (themeStocks.length >= 1) { // 1개만 있어도 주요 테마는 표시 (대장주 1개라도 있으면 의미 있음)
+        if (themeStocks.length >= 3) { // 최소 3개 종목
             // 이미 존재하는지 재확인 (이름 매칭)
             if (!exists) {
                 console.log(`  Adding missing theme: ${themeName} (${themeStocks.length} stocks)`);
@@ -661,11 +719,20 @@ function isThreeStar(theme) {
  * @param {Object} theme - 테마 객체 (stocks, score, totalVolume 포함)
  * @returns {Object} { stars: number, reason: string }
  */
+// 별점 비대상 테마 목록 (특수 분류 - 주도 테마가 아닌 분류)
+const STAR_EXCLUDED_THEMES = ['개별이슈', '기타', '기타섹터', '신규상장'];
+
 function calculateStarRating(theme) {
     const phase = getMarketPhase();
     const maxStars = MAX_STARS_BY_PHASE[phase];
     const stocks = theme.stocks || [];
     const score = theme.score || 0;
+    const themeName = theme.name || '';
+
+    // ⭐ NEW: 별점 비대상 테마 필터링 (개별이슈, 기타는 주도주가 될 수 없음)
+    if (STAR_EXCLUDED_THEMES.some(excluded => themeName.includes(excluded))) {
+        return { stars: 0, reason: '별점 비대상 테마' };
+    }
 
     // 장 초반이면 별 부여 안함
     if (maxStars === 0) {
@@ -709,10 +776,12 @@ setInterval(updateThemes, 5 * 60 * 1000);
 app.get('/api/themes', (req, res) => {
     // 갱신 버전 정보와 함께 테마 데이터 반환
     // 프론트엔드에서 데이터 버전을 추적하여 완전 갱신 여부 판단
+    const nxtStatus = getNxtMarketStatus();
     res.json({
         themes: cachedThemes,
         lastUpdated: lastUpdated,
-        version: lastUpdated // 버전 식별자 (타임스탬프 기반)
+        version: lastUpdated, // 버전 식별자 (타임스탬프 기반)
+        marketStatus: nxtStatus // 현재 시장 상태: PRE_MARKET, REGULAR, AFTER_MARKET, CLOSED
     });
 });
 
@@ -726,6 +795,10 @@ app.get('/api/balanced-hot-stocks', (req, res) => {
 
 app.get('/api/theme-sectors', (req, res) => {
     res.json(THEME_SECTORS);
+});
+
+app.get('/api/ipo-stocks', (req, res) => {
+    res.json(cachedIPOStocks);
 });
 
 app.listen(port, () => {

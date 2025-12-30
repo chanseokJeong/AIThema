@@ -1,6 +1,9 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 require('dotenv').config();
 
+// ⭐ 테마 정의를 sector_analyzer.js에서 단일 소스로 관리
+const { THEME_SECTORS, CORE_THEME_CANDIDATES, OTHER_SECTOR_THEMES } = require('./sector_analyzer');
+
 // Initialize Gemini API
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
@@ -25,6 +28,10 @@ async function analyzeThemes(newsList, hotStocks = []) {
             `${s.name} (등락률: ${s.rate > 0 ? '+' : ''}${s.rate}%, 거래대금: ${s.amount}백만)`
         ).join("\n");
 
+        // 테마 분류 계층을 AI에 전달
+        const coreThemes = CORE_THEME_CANDIDATES.join(', ');
+        const otherThemes = OTHER_SECTOR_THEMES.join(', ');
+
         const prompt = `
     You are a professional financial analyst AI specializing in Korean stock market theme analysis.
 
@@ -36,41 +43,56 @@ async function analyzeThemes(newsList, hotStocks = []) {
     **NEWS HEADLINES:**
     ${newsTitles}
 
-    **Instructions:**
-    2. **PRIORITY 2 (Filtering & Naming Rules)**:
-        - **IGNORE**: ETFs, ETNs, SPACs (스팩), Preferred Stocks (우선주). Focus ONLY on Common Stocks (보통주).
-        - **THEME NAME**: Must be a **SINGLE KEYWORD** or **Short Phrase** representing an INDUSTRY or SECTOR.
-          - GOOD: "로봇", "반도체", "바이오", "원자력", "2차전지"
-          - BAD: "스팩(SPAC)", "우선주", "에너지 (원자력 & SMR)", "급등주", "코스닥 상위"
-        - **NO "Type-based" Themes**: Do NOT create themes based on stock type like "SPAC", "Preferred Stock", "Politics". Focus on **Business Business**.
+    **THEME HIERARCHY (테마 분류 계층):**
 
-    3. **PRIORITY 3 (Stock Selection & Sorting)**:
+    1. **CORE THEMES (핵심 테마 - 우선 분류, 최대 7개 선정됨):**
+       ${coreThemes}
+
+    2. **OTHER SECTORS (기타섹터 - 통합 대상):**
+       ${otherThemes}
+
+    3. **SPECIAL CATEGORIES (특수 분류):**
+       - "개별이슈": Only for stocks with company-specific news (합병, 지분매각, 실적공시)
+       - Do NOT create themes for IPO/신규상장 stocks (handled separately by system)
+
+    **CRITICAL INSTRUCTIONS:**
+
+    1. **CLASSIFICATION PRIORITY**:
+        - **CORE THEMES FIRST**: Always try to classify into CORE THEMES above.
+        - **OTHER SECTORS**: If not core, classify into OTHER SECTORS (will be merged into "기타섹터").
+        - **SUB-THEME ALLOWED**: Create sub-themes like "반도체-HBM", "반도체-장비" if needed.
+        - **"개별이슈" AS LAST RESORT**: Only for truly company-specific events.
+
+    2. **FILTERING RULES**:
+        - **IGNORE**: ETFs, ETNs, SPACs (스팩), Preferred Stocks (우선주)
+        - **FILTER**: Names containing "스팩", "제N호", ending with "우"/"우B" -> EXCLUDE
+
+    3. **STOCK SELECTION**:
         - **CRITERIA**: Select stocks with the **HIGHEST RATE (%)** first.
-        - **NO DUPLICATES**: Each stock can appear in ONLY ONE theme. Never repeat the same stock name.
-        - **Rate > 5%**: If a stock has Rate > 5%, it MUST be prioritized over any stock with Rate < 5%.
-        - **Filter Noise**: If a stock name contains "스팩", "ETF", "ETN", or ends with "우", "우B", DO NOT include it.
+        - **NO DUPLICATES**: Each stock can appear in ONLY ONE theme.
+        - **ORDER**: Sort by Rate (%) DESCENDING within each theme.
 
-    4. **Goal**: Identify **AT LEAST 6-8 distinct themes**.
+    4. **TARGET OUTPUT**: Aim for **10-15 distinct themes**
+        - Each theme should have **3-5 stocks**
+        - Focus on CORE THEMES - they will be ranked by volume/rate
 
-    5. **Stock Selection Rules**:
-        - **MANDATORY**: Include 5 UNIQUE stocks per theme. Never repeat the same stock.
-        - **ORDER**: Sort stocks inside the theme by **Rate (%) DESCENDING**. The highest riser MUST be first.
-        - **Filter Check**: Once more, DO NOT include "스팩", "제X호", "우선주" in the stock list.
+    5. **Headline**: Select ONE news headline that best represents this theme.
 
-    6. **Headline**: Select ONE news headline that best represents this theme.
-
-    7. **Format**: Return ONLY the JSON array:
+    6. **OUTPUT FORMAT**: Return ONLY JSON array, no explanations:
     [
       {
         "id": 1,
         "name": "테마명",
         "headline": "대표 뉴스 헤드라인",
-        "stocks": ["종목1", "종목2", "종목3", "종목4", "종목5"]
+        "stocks": ["종목1", "종목2", "종목3"]
       }
     ]
-    8. **Constraint**: Return ONLY JSON. No explanations. NO DUPLICATE STOCK NAMES.
 
-    **IMPORTANT**: The user wants to see "What is rising TODAY", not "What is famous generally". Trust the data provided.
+    **IMPORTANT**:
+    - Trust the real-time data. Today's movers matter most.
+    - NO DUPLICATE STOCK NAMES across themes.
+    - Prefer CORE THEMES over OTHER SECTORS.
+    - Minimize "개별이슈" usage - classify into proper sectors whenever possible.
     `;
 
         const maxRetries = 5;
@@ -124,48 +146,10 @@ async function analyzeThemes(newsList, hotStocks = []) {
 }
 
 // ⭐ NEW: AI 없이 급등주 데이터 기반 테마 자동 생성
+// THEME_SECTORS는 상단에서 sector_analyzer.js로부터 import됨
 function generateThemesFromHotStocks(hotStocks) {
     console.log('Generating themes from hot stocks data (AI fallback)...');
-
-    // 테마 섹터 정의 (sector_analyzer.js와 동기화)
-    const THEME_SECTORS = {
-        '로봇': {
-            keywords: ['로봇', '로보', '자동화'],
-            stocks: ['레인보우로보틱스', '두산로보틱스', '로보티즈', '로보스타', '유진로봇', '에스피지', '휴림로봇', '디아이씨', '코츠테크놀로지']
-        },
-        '바이오': {
-            keywords: ['바이오', '제약', '헬스케어', '의료', '셀트리온', '에이비엘'],
-            stocks: ['셀트리온', '삼성바이오로직스', '에이비엘바이오', '메디톡스', '알테오젠', '레고켐바이오', '유한양행', '한미약품']
-        },
-        '2차전지': {
-            keywords: ['2차전지', '배터리', '에코프로', '엘앤에프', '포스코퓨처엠'],
-            stocks: ['에코프로', '에코프로비엠', 'LG에너지솔루션', '포스코퓨처엠', '엘앤에프', '금양', '피엔티']
-        },
-        '반도체': {
-            keywords: ['반도체', 'HBM', '칩', '하이닉스', '테크윙', '원익'],
-            stocks: ['삼성전자', 'SK하이닉스', '태성', '켐트로스', '한미반도체', '원익IPS', '칩스앤미디어', '원익홀딩스', '이오테크닉스', '테크윙', '넥스트칩']
-        },
-        '조선': {
-            keywords: ['조선', '선박', '중공업', 'HD현대', '한화오션'],
-            stocks: ['HD현대중공업', '삼성중공업', '한화오션', '현대미포조선', 'STX중공업']
-        },
-        '원자력': {
-            keywords: ['원전', '원자력', 'SMR', '두산에너빌리티', '한전'],
-            stocks: ['두산에너빌리티', '한전KPS', '우진', '비에이치아이', '현대건설', '일진파워', '보성파워텍']
-        },
-        '자동차': {
-            keywords: ['자동차', '현대차', '기아', '모빌리티', '만도', '완성차'],
-            stocks: ['현대차', '기아', '현대모비스', 'HL만도', '한라캐스트', '현대위아', '만도', '세종공업']
-        },
-        '건설': {
-            keywords: ['건설', '주택', '토건', '인프라', 'GS건설', '대우건설'],
-            stocks: ['삼성물산', 'GS건설', '현대건설', '대우건설', 'DL이앤씨', '코오롱글로벌']
-        },
-        '방산': {
-            keywords: ['방산', '방위', '국방', '한화에어로', 'LIG넥스원'],
-            stocks: ['한화에어로스페이스', 'LIG넥스원', '한국항공우주', '현대로템', '풍산', '한화시스템']
-        }
-    };
+    console.log(`Using ${Object.keys(THEME_SECTORS).length} theme definitions from sector_analyzer.js`);
 
     const themes = [];
     let themeId = 1;
@@ -185,7 +169,7 @@ function generateThemesFromHotStocks(hotStocks) {
             );
         });
 
-        if (matchedStocks.length >= 2) {
+        if (matchedStocks.length >= 3) { // 최소 3개 종목
             // 등락률 기준 정렬
             matchedStocks.sort((a, b) => b.rate - a.rate);
 
@@ -212,7 +196,7 @@ function generateThemesFromHotStocks(hotStocks) {
         .sort((a, b) => b.rate - a.rate)
         .slice(0, 5);
 
-    if (remainingStocks.length >= 2) {
+    if (remainingStocks.length >= 3) { // 최소 3개 종목
         const topStock = remainingStocks[0];
         themes.push({
             id: themeId++,

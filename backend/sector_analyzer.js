@@ -5,6 +5,15 @@ const iconv = require('iconv-lite');
 // 네이버 금융 업종별 시세 URL
 const SECTOR_BASE_URL = 'https://finance.naver.com/sise/sise_group.naver?type=upjong';
 
+// 핵심 테마 후보군 (동적 선정 대상 - 11개)
+const CORE_THEME_CANDIDATES = [
+    '로봇', '바이오', '2차전지', '반도체', '조선',
+    '원자력', '자동차', '건설', '방산', '항공', 'AI/소프트웨어'
+];
+
+// 기타섹터로 통합될 테마 (4개)
+const OTHER_SECTOR_THEMES = ['화장품', '게임', '엔터/미디어', '금융/증권'];
+
 // 주요 테마 섹터 정의 (⭐ 확장된 종목 리스트)
 const THEME_SECTORS = {
     '로봇': {
@@ -42,6 +51,31 @@ const THEME_SECTORS = {
     '방산': {
         keywords: ['방산', '방위', '국방', '무기'],
         stocks: ['한화에어로스페이스', 'LIG넥스원', '한국항공우주', '현대로템', '풍산', '한화시스템']
+    },
+    // ⭐ NEW: 추가 테마 (티마 앱과 유사하게 확장)
+    '항공': {
+        keywords: ['항공', '여행', 'LCC', '저비용항공', '항공사'],
+        stocks: ['대한항공', '아시아나항공', '제주항공', '진에어', '티웨이항공', '에어부산', '이스타항공']
+    },
+    'AI/소프트웨어': {
+        keywords: ['AI', 'LLM', 'GPT', 'SW', '클라우드', '소프트웨어', '플랫폼'],
+        stocks: ['솔트룩스', '셀바스AI', '마인즈랩', '코난테크놀로지', '플리토', '알체라', '라온피플', '오픈엣지테크놀로지']
+    },
+    '화장품': {
+        keywords: ['화장품', '뷰티', 'K-뷰티', '코스메틱', '미용'],
+        stocks: ['아모레퍼시픽', 'LG생활건강', '코스맥스', '클리오', '에이블씨엔씨', '토니모리', '한국콜마', '코스메카코리아']
+    },
+    '게임': {
+        keywords: ['게임', 'IP', '모바일게임', 'PC게임'],
+        stocks: ['크래프톤', '엔씨소프트', '넷마블', '펄어비스', '위메이드', '컴투스', '카카오게임즈', '네오위즈']
+    },
+    '엔터/미디어': {
+        keywords: ['엔터', 'K-POP', '방송', '미디어', 'OTT', '콘텐츠', '기획사'],
+        stocks: ['하이브', 'JYP Ent.', 'SM', 'YG엔터테인먼트', 'CJ ENM', '스튜디오드래곤', 'SBS', '제이콘텐트리']
+    },
+    '금융/증권': {
+        keywords: ['금융', '증권', '은행', '보험', '자산운용'],
+        stocks: ['삼성증권', '키움증권', '미래에셋증권', 'KB금융', '신한지주', '하나금융지주', 'NH투자증권', '메리츠금융지주']
     }
 };
 
@@ -275,5 +309,7 @@ module.exports = {
     fetchSectorTopStocks,
     fetchThemeStocks,
     fetchBalancedHotStocks,
-    THEME_SECTORS
+    THEME_SECTORS,
+    CORE_THEME_CANDIDATES,
+    OTHER_SECTOR_THEMES
 };

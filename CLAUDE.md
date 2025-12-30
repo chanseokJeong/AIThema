@@ -30,6 +30,7 @@ node list_models.js           # 사용 가능한 Gemini 모델 목록
 ### 프론트엔드 (React/Vite)
 ```bash
 cd frontend
+
 npm run dev                   # 개발 서버 시작 (기본: http://localhost:5173)
 npm run build                 # 프로덕션 빌드
 npm run preview               # 프로덕션 빌드 미리보기

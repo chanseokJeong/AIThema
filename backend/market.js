@@ -57,14 +57,14 @@ async function fetchStockPrice(name, code = null) {
         return { name, rate: 0, amount: 0, price: 0, time: '' };
     }
 
-    // ⭐ NEW: 네이버 실시간 API 우선 사용 (빠르고 정확한 거래대금)
+    // ⭐ 네이버 실시간 API 우선 사용 (빠르고 정확한 거래대금, NXT 시세 지원)
     try {
         const { fetchStockByCode } = require('./naver_api');
         const apiData = await fetchStockByCode(code);
         if (apiData) {
             // console.log(`  [API] ${name}: ${apiData.rate}% (${apiData.amount}억)`);
             if (name.includes('두산에너빌리티')) {
-                console.log(`  [API SUCCESS] ${name}: Rate ${apiData.rate}, Amount ${apiData.amount}`);
+                console.log(`  [API SUCCESS] ${name}: Rate ${apiData.rate}, Amount ${apiData.amount}, Market ${apiData.marketStatus}`);
             }
             return {
                 name: name,
@@ -75,7 +75,9 @@ async function fetchStockPrice(name, code = null) {
                 open: apiData.open,
                 high: apiData.high,
                 low: apiData.low,
-                time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
+                time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
+                marketStatus: apiData.marketStatus, // PRE_MARKET, REGULAR, AFTER_MARKET, CLOSED
+                nxtInfo: apiData.nxtInfo // NXT 상세 정보 (선택적 사용)
             };
         }
     } catch (apiError) {
