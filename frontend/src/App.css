@@ -222,3 +222,166 @@ body {
 .stock-bar.negative {
   background-color: var(--negative);
 }
+
+/* ===== VI (변동성완화장치) 스타일 ===== */
+
+/* VI 발동 종목 아이템 스타일 */
+.stock-item.vi-active {
+  border: 2px solid #FF4444 !important;
+  border-radius: 6px;
+  background-color: rgba(255, 68, 68, 0.1);
+  position: relative;
+  animation: vi-glow 2s ease-in-out infinite;
+}
+
+/* VI 발동 시 왼쪽 경고 라인 */
+.stock-item.vi-active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: linear-gradient(180deg, #FF4444, #FF8800, #FF4444);
+  animation: vi-stripe 1s linear infinite;
+}
+
+/* VI 배지 펄스 애니메이션 */
+@keyframes vi-pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1.05);
+  }
+}
+
+/* VI 발동 종목 글로우 효과 */
+@keyframes vi-glow {
+  0%, 100% {
+    box-shadow: 0 0 5px rgba(255, 68, 68, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 15px rgba(255, 68, 68, 0.6), 0 0 25px rgba(255, 68, 68, 0.3);
+  }
+}
+
+/* VI 왼쪽 스트라이프 애니메이션 */
+@keyframes vi-stripe {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 0 20px;
+  }
+}
+
+/* VI 배지 기본 스타일 (인라인 스타일 보완) */
+.vi-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: bold;
+  margin-left: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* ====== 상한가/하한가 배지 스타일 ====== */
+
+/* 상한가 펄스 애니메이션 */
+@keyframes limit-pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+    box-shadow: 0 0 8px rgba(255, 0, 0, 0.6);
+  }
+  50% {
+    opacity: 0.9;
+    transform: scale(1.08);
+    box-shadow: 0 0 16px rgba(255, 0, 0, 0.9);
+  }
+}
+
+/* 상한가 글로우 애니메이션 */
+@keyframes limit-glow {
+  0%, 100% {
+    box-shadow: 0 0 8px rgba(255, 0, 0, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(255, 0, 0, 0.7), 0 0 30px rgba(255, 0, 0, 0.4);
+  }
+}
+
+/* 상한가/하한가 배지 기본 스타일 */
+.limit-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: bold;
+  margin-left: 4px;
+  letter-spacing: 0.5px;
+}
+
+.limit-badge.upper {
+  background-color: #FF0000;
+  color: #FFFFFF;
+  animation: limit-pulse 0.8s ease-in-out infinite;
+}
+
+.limit-badge.lower {
+  background-color: #0066FF;
+  color: #FFFFFF;
+}
+
+/* 상한가/하한가 종목 아이템 스타일 */
+.stock-item.limit-active {
+  animation: limit-glow 1.5s ease-in-out infinite;
+}
+
+.stock-item.limit-active.upper {
+  border-color: #FF0000;
+  background-color: rgba(255, 0, 0, 0.15);
+}
+
+.stock-item.limit-active.lower {
+  border-color: #0066FF;
+  background-color: rgba(0, 102, 255, 0.15);
+}
+
+/* 정적 VI 배지 */
+.vi-badge.static {
+  background-color: #FF4444;
+  color: #FFFFFF;
+}
+
+/* 동적 VI 배지 */
+.vi-badge.dynamic {
+  background-color: #FF8800;
+  color: #FFFFFF;
+}
+
+/* 거래정지 배지 */
+.vi-badge.halt {
+  background-color: #8B0000;
+  color: #FFFFFF;
+}
+
+/* VI 발동 종목 이름 강조 */
+.stock-item.vi-active .stock-name {
+  color: #FFFFFF;
+  font-weight: 700;
+}
+
+/* VI 발동 종목 등락률 강조 */
+.stock-item.vi-active .stock-rate {
+  font-size: 1rem;
+}

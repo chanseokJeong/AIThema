@@ -77,7 +77,15 @@ async function fetchStockPrice(name, code = null) {
                 low: apiData.low,
                 time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
                 marketStatus: apiData.marketStatus, // PRE_MARKET, REGULAR, AFTER_MARKET, CLOSED
-                nxtInfo: apiData.nxtInfo // NXT 상세 정보 (선택적 사용)
+                nxtInfo: apiData.nxtInfo, // NXT 상세 정보 (선택적 사용)
+                // VI(변동성완화장치) 정보
+                isVI: apiData.isVI || false,
+                viType: apiData.viType || null,   // 'STATIC' | 'DYNAMIC' | 'HALT' | null
+                viText: apiData.viText || null,   // '정적VI' | '동적VI' | '거래정지' | null
+                // 상한가/하한가 정보
+                isLimit: apiData.isLimit || false,
+                limitType: apiData.limitType || null,   // 'UPPER' | 'LOWER' | null
+                limitText: apiData.limitText || null    // '상한가' | '하한가' | null
             };
         }
     } catch (apiError) {
@@ -184,12 +192,19 @@ async function fetchStockPrice(name, code = null) {
             open,
             high,
             low,
-            time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
+            time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
+            // VI 정보는 HTML 스크래핑에서 확인 불가 - 기본값
+            isVI: false,
+            viType: null,
+            viText: null,
+            isLimit: false,
+            limitType: null,
+            limitText: null
         };
 
     } catch (error) {
         console.error(`Failed to scrape ${name} (${code}):`, error.message);
-        return { name, rate: 0, amount: 0, price: 0, open: 0, high: 0, low: 0, time: '' };
+        return { name, rate: 0, amount: 0, price: 0, open: 0, high: 0, low: 0, time: '', isVI: false, viType: null, viText: null, isLimit: false, limitType: null, limitText: null };
     }
 }
 
@@ -214,7 +229,15 @@ function enrichStockWithHotData(stockName, hotStocks) {
             rate: hotStock.rate,
             amount: hotStock.amount,
             price: hotStock.price || 0, // 급등주 데이터에 price가 없을 수도 있음
-            time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
+            time: new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
+            // VI 정보 전달
+            isVI: hotStock.isVI || false,
+            viType: hotStock.viType || null,
+            viText: hotStock.viText || null,
+            // 상한가/하한가 정보 전달
+            isLimit: hotStock.isLimit || false,
+            limitType: hotStock.limitType || null,
+            limitText: hotStock.limitText || null
         };
     }
     return null;

@@ -12,6 +12,8 @@ const { fetchDiverseNews, fetchStocksFromNews } = require('./news_crawler');
 const { fetchTopThemesWithStocks } = require('./theme_crawler');
 const { fetchIPOStocks, isIPOStock } = require('./ipo_crawler');
 const { selectFinalThemes } = require('./theme_selector');
+const { convertNaverToThemes, mergeThemes } = require('./theme_merger');
+const { groupThemes, generateThemeSummary } = require('./theme_grouper');
 const { getMarketStatus: getNxtMarketStatus } = require('./naver_api');
 
 // ===== 로그 파일 설정 =====
@@ -165,16 +167,17 @@ async function updateThemes() {
         cachedHotStocks = enrichedHotStocks;
         console.log(`Total enriched stocks (with news): ${enrichedHotStocks.length}`);
 
-        // Step 2.8: ⭐ NEW - 네이버 테마 페이지에서 테마-종목 매핑 수집 (티마 방식 강화)
-        console.log('Step 2.8: Fetching Naver theme data...');
+        // Step 2.8: ⭐ HYBRID - 네이버 테마 페이지에서 테마-종목 매핑 수집 (주요 소스)
+        console.log('Step 2.8: Fetching Naver theme data (PRIMARY SOURCE)...');
+        let naverThemesRaw = {};
         try {
-            const naverThemes = await fetchTopThemesWithStocks(15); // 상위 15개 테마
-            const naverThemeCount = Object.keys(naverThemes).length;
+            naverThemesRaw = await fetchTopThemesWithStocks(30); // 상위 30개 테마 (하이브리드 방식)
+            const naverThemeCount = Object.keys(naverThemesRaw).length;
             console.log(`Naver themes collected: ${naverThemeCount}`);
 
             // 네이버 테마 종목을 enrichedHotStocks에 병합
             let naverStockAdded = 0;
-            for (const [themeName, themeData] of Object.entries(naverThemes)) {
+            for (const [themeName, themeData] of Object.entries(naverThemesRaw)) {
                 for (const stock of themeData.stocks) {
                     if (isNoiseStock(stock.name)) continue;
                     if (!existingCodes.has(stock.code)) {
@@ -190,10 +193,10 @@ async function updateThemes() {
             }
             console.log(`Added ${naverStockAdded} stocks from Naver themes`);
         } catch (naverError) {
-            console.warn('Naver theme fetch failed (non-critical):', naverError.message);
+            console.warn('Naver theme fetch failed:', naverError.message);
         }
 
-        // Step 2.9: IPO 종목 수집 (NEW)
+        // Step 2.9: IPO 종목 수집
         console.log('Step 2.9: Fetching IPO stocks...');
         try {
             const ipoData = await fetchIPOStocks(30); // 30일 이내 신규상장
@@ -203,17 +206,30 @@ async function updateThemes() {
             console.warn('IPO fetch failed (non-critical):', ipoError.message);
         }
 
-        if (allNews.length === 0 && balancedHotStocks.length === 0) {
-            console.log('No data found.');
-            return;
+        // Step 3: ⭐ HYBRID - 네이버 테마 기반 기본 테마 생성 (주요 소스)
+        console.log('Step 3: Converting Naver themes to base themes (PRIMARY)...');
+        let baseThemes = convertNaverToThemes(naverThemesRaw, enrichedHotStocks);
+        console.log(`Base themes from Naver: ${baseThemes.length}`);
+
+        // Step 3.5: AI 분석 (보조 - 선택적, 실패해도 계속 진행)
+        console.log('Step 3.5: AI analysis for hot theme detection (SECONDARY)...');
+        let aiThemes = [];
+        try {
+            if (allNews.length > 0 || balancedHotStocks.length > 0) {
+                aiThemes = await analyzeThemes(allNews, balancedHotStocks);
+                console.log(`AI themes detected: ${aiThemes.length}`);
+            }
+        } catch (aiError) {
+            console.warn('AI analysis failed (non-critical, using Naver themes only):', aiError.message);
         }
 
-        // Step 3: AI 분석 (균형잡힌 급등주 + 뉴스)
-        console.log('Step 3: Analyzing themes with AI...');
-        let analyzedThemes = await analyzeThemes(allNews, balancedHotStocks);
+        // Step 3.6: ⭐ HYBRID - 네이버 테마 + AI 분석 결과 병합
+        console.log('Step 3.6: Merging Naver themes with AI analysis...');
+        let analyzedThemes = mergeThemes(baseThemes, aiThemes, balancedHotStocks);
+        console.log(`Merged themes: ${analyzedThemes.length} (hot: ${analyzedThemes.filter(t => t.isHot).length})`);
 
-        // Step 3.5: 주요 테마 강제 추가 (AI가 놓친 테마 보완) ⭐ NEW
-        console.log('Step 3.5: Adding missing major themes...');
+        // Step 3.7: 주요 테마 강제 추가 (병합 후에도 누락된 테마 보완)
+        console.log('Step 3.7: Adding missing major themes...');
         analyzedThemes = await addMissingMajorThemes(analyzedThemes, balancedHotStocks);
 
         // Step 4: 테마별 종목 데이터 enrichment + 필터링 ⭐ IMPROVED
@@ -237,8 +253,17 @@ async function updateThemes() {
         });
 
         const enrichedThemes = await Promise.all(analyzedThemes.map(async (theme) => {
-            // ⭐ NEW: 중복 종목 제거 (AI가 같은 종목을 여러 번 반환하는 경우 방지)
-            const uniqueStockNames = [...new Set(theme.stocks)];
+            // ⭐ FIX: 중복 종목 제거 (객체 배열/string 배열 모두 처리)
+            // theme.stocks가 객체 배열일 수도 있고 string 배열일 수도 있음
+            const seenNames = new Set();
+            const uniqueStockNames = [];
+            for (const stock of theme.stocks) {
+                const name = typeof stock === 'string' ? stock : stock.name;
+                if (name && !seenNames.has(name)) {
+                    seenNames.add(name);
+                    uniqueStockNames.push(name);
+                }
+            }
             console.log(`  Theme "${theme.name}": ${theme.stocks.length} stocks → ${uniqueStockNames.length} unique`);
 
             const enrichedStocks = await Promise.all(uniqueStockNames.map(async (stockName) => {
@@ -295,10 +320,16 @@ async function updateThemes() {
             };
         }));
 
+        // Step 5.5: ⭐ 테마 그룹핑 (유사 테마 통합 + 재벌 그룹 감지)
+        console.log('Step 5.5: Grouping similar themes...');
+        const groupedThemes = groupThemes(enrichedThemes, 15); // 최대 15개로 압축
+        console.log(`Grouped themes: ${groupedThemes.length} (from ${enrichedThemes.length})`);
+        console.log(`Theme summary: ${groupedThemes.map(t => t.name).join(', ')}`);
+
         // Step 6: 최종 테마 선정 (핵심 7개 + 특수 분류 3개 = 최대 10개)
         console.log('Step 6: Selecting final themes (max 10)...');
         const selectedThemes = await selectFinalThemes(
-            enrichedThemes,
+            groupedThemes, // enrichedThemes 대신 groupedThemes 사용
             cachedIPOStocks,
             balancedHotStocks,
             { maxCoreThemes: 7, maxTotalThemes: 10, themeSectors: THEME_SECTORS }

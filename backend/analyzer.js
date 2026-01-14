@@ -7,14 +7,23 @@ const { THEME_SECTORS, CORE_THEME_CANDIDATES, OTHER_SECTOR_THEMES } = require('.
 // Initialize Gemini API
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
+/**
+ * AI 테마 분석 (하이브리드 시스템에서 보조 역할)
+ * - 네이버 테마가 주요 소스, AI는 핫 테마 선정 및 헤드라인 생성 담당
+ * - AI 실패 시에도 네이버 테마로 서비스 정상 동작
+ * @param {Array} newsList - 뉴스 목록
+ * @param {Array} hotStocks - 급등주 데이터
+ * @returns {Array} 분석된 테마 배열
+ */
 async function analyzeThemes(newsList, hotStocks = []) {
     if (!process.env.GEMINI_API_KEY) {
         console.warn("GEMINI_API_KEY is missing. Using hot stocks data for theme generation.");
-        // ⭐ API 키 없어도 급등주 데이터가 있으면 테마 생성
+        // ⭐ HYBRID: API 키 없어도 급등주 데이터가 있으면 테마 생성 (네이버 테마와 병합됨)
         if (hotStocks && hotStocks.length > 0) {
             return generateThemesFromHotStocks(hotStocks);
         }
-        return getMockData();
+        // 하이브리드 모드에서는 빈 배열 반환해도 네이버 테마가 있으므로 서비스 정상 동작
+        return [];
     }
 
     try {

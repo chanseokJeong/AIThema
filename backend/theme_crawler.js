@@ -173,17 +173,18 @@ async function fetchThemeStocks(themeCode) {
 
 /**
  * 상위 N개 테마의 종목 데이터 수집
- * @param {number} topN - 상위 몇 개 테마를 수집할지 (기본: 20)
+ * 하이브리드 방식: 등락률 상위 + 거래 활발 테마를 균형있게 수집
+ * @param {number} topN - 상위 몇 개 테마를 수집할지 (기본: 30)
  * @returns {Promise<Object>} { 테마명: { code, rate, stocks: [...] } }
  */
-async function fetchTopThemesWithStocks(topN = 20) {
+async function fetchTopThemesWithStocks(topN = 30) {
     // 캐시 확인
     if (themeCache.data && Date.now() - themeCache.lastUpdated < themeCache.TTL) {
         console.log('Using cached theme data');
         return themeCache.data;
     }
 
-    console.log(`Fetching top ${topN} themes with stocks from Naver...`);
+    console.log(`Fetching top ${topN} themes with stocks from Naver (hybrid mode)...`);
 
     const themeList = await fetchThemeList();
 
@@ -192,10 +193,29 @@ async function fetchTopThemesWithStocks(topN = 20) {
         return {};
     }
 
-    // 등락률 기준 정렬 후 상위 N개
-    const sortedThemes = themeList
+    // 다양한 기준으로 테마 선정 (하이브리드 방식)
+    // 1. 등락률 상위 절반
+    const byRate = [...themeList].sort((a, b) => b.rate - a.rate);
+    const topByRate = byRate.slice(0, Math.ceil(topN / 2));
+
+    // 2. 상승 종목 수 상위 (거래 활발)
+    const byRiseCount = [...themeList].sort((a, b) => b.riseCount - a.riseCount);
+    const topByActivity = byRiseCount.slice(0, Math.ceil(topN / 2));
+
+    // 병합 및 중복 제거
+    const themeMap = new Map();
+    for (const theme of [...topByRate, ...topByActivity]) {
+        if (!themeMap.has(theme.code)) {
+            themeMap.set(theme.code, theme);
+        }
+    }
+
+    // 최종 정렬 (등락률 기준)
+    const sortedThemes = Array.from(themeMap.values())
         .sort((a, b) => b.rate - a.rate)
         .slice(0, topN);
+
+    console.log(`Selected ${sortedThemes.length} themes (by rate: ${topByRate.length}, by activity: ${topByActivity.length})`);
 
     const result = {};
 

@@ -1,6 +1,6 @@
 import React from 'react';
 import { calculateThemeScore } from '../utils/calculation';
-import { TrendingUp, TrendingDown, Star } from 'lucide-react';
+import { TrendingUp, TrendingDown, Star, AlertTriangle } from 'lucide-react';
 
 // 별 등급 컴포넌트
 const StarRating = ({ stars, reason }) => {
@@ -28,6 +28,102 @@ const StarRating = ({ stars, reason }) => {
                 <Star key={i} size={14} fill={color} color={color} />
             ))}
         </div>
+    );
+};
+
+// 상한가/하한가 배지 컴포넌트
+const LimitBadge = ({ limitType, limitText }) => {
+    if (!limitType) return null;
+
+    const isUpper = limitType === 'UPPER';
+    const style = {
+        backgroundColor: isUpper ? '#FF0000' : '#0066FF',
+        color: '#FFFFFF',
+        text: limitText || (isUpper ? '상한가' : '하한가')
+    };
+
+    return (
+        <span
+            className={`limit-badge ${isUpper ? 'upper' : 'lower'}`}
+            title={style.text}
+            style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '2px',
+                padding: '2px 6px',
+                borderRadius: '4px',
+                fontSize: '10px',
+                fontWeight: 'bold',
+                backgroundColor: style.backgroundColor,
+                color: style.color,
+                marginLeft: '4px',
+                animation: isUpper ? 'limit-pulse 0.8s ease-in-out infinite' : 'none',
+                boxShadow: isUpper ? '0 0 8px rgba(255, 0, 0, 0.6)' : 'none'
+            }}
+        >
+            {isUpper ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
+            {style.text}
+        </span>
+    );
+};
+
+// VI(변동성완화장치) 배지 컴포넌트
+const VIBadge = ({ viType, viText }) => {
+    if (!viType) return null;
+
+    // VI 타입에 따른 스타일
+    const getViStyle = (type) => {
+        switch (type) {
+            case 'STATIC':
+                return {
+                    backgroundColor: '#FF4444',
+                    color: '#FFFFFF',
+                    text: viText || '정적VI'
+                };
+            case 'DYNAMIC':
+                return {
+                    backgroundColor: '#FF8800',
+                    color: '#FFFFFF',
+                    text: viText || '동적VI'
+                };
+            case 'HALT':
+                return {
+                    backgroundColor: '#8B0000',
+                    color: '#FFFFFF',
+                    text: viText || '거래정지'
+                };
+            default:
+                return {
+                    backgroundColor: '#FF6600',
+                    color: '#FFFFFF',
+                    text: 'VI'
+                };
+        }
+    };
+
+    const style = getViStyle(viType);
+
+    return (
+        <span
+            className="vi-badge"
+            title={`${style.text} 발동 중 - 2분간 단일가 매매`}
+            style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '3px',
+                padding: '2px 6px',
+                borderRadius: '4px',
+                fontSize: '10px',
+                fontWeight: 'bold',
+                backgroundColor: style.backgroundColor,
+                color: style.color,
+                marginLeft: '4px',
+                animation: 'vi-pulse 1s ease-in-out infinite'
+            }}
+        >
+            <AlertTriangle size={10} />
+            {style.text}
+        </span>
     );
 };
 
@@ -80,11 +176,32 @@ const ThemeCard = ({ theme, showScore, onToggleDisplay }) => {
                     const isHotStock = Math.abs(stock.rate || 0) >= 10 || (stock.amount || 0) >= maxAmount * 0.8;
 
                     return (
-                        <div key={`${stock.name}-${stock.code || index}`} className="stock-item">
+                        <div
+                            key={`${stock.name}-${stock.code || index}`}
+                            className={`stock-item ${stock.isVI ? 'vi-active' : ''} ${stock.isLimit ? 'limit-active' : ''}`}
+                            style={
+                                stock.isVI ? {
+                                    border: '2px solid #FF4444',
+                                    borderRadius: '6px',
+                                    backgroundColor: 'rgba(255, 68, 68, 0.1)',
+                                    padding: '8px',
+                                    marginBottom: '6px'
+                                } : stock.isLimit ? {
+                                    border: `2px solid ${stock.limitType === 'UPPER' ? '#FF0000' : '#0066FF'}`,
+                                    borderRadius: '6px',
+                                    backgroundColor: stock.limitType === 'UPPER' ? 'rgba(255, 0, 0, 0.15)' : 'rgba(0, 102, 255, 0.15)',
+                                    padding: '8px',
+                                    marginBottom: '6px',
+                                    boxShadow: stock.limitType === 'UPPER' ? '0 0 12px rgba(255, 0, 0, 0.4)' : 'none'
+                                } : {}
+                            }
+                        >
                             <div className="stock-row top-row">
                                 <span className="stock-name">
                                     {stock.name}
-                                    {isHotStock && <span style={{ marginLeft: '4px', color: '#ffcc00' }}>🔥</span>}
+                                    {stock.isLimit && <LimitBadge limitType={stock.limitType} limitText={stock.limitText} />}
+                                    {stock.isVI && <VIBadge viType={stock.viType} viText={stock.viText} />}
+                                    {isHotStock && !stock.isVI && !stock.isLimit && <span style={{ marginLeft: '4px', color: '#ffcc00' }}>🔥</span>}
                                 </span>
                                 <span className={`stock-rate ${stock.rate >= 0 ? 'positive' : 'negative'}`}>
                                     {stock.rate > 0 ? '+' : ''}{stock.rate.toFixed(2)}%

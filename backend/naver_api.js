@@ -5,7 +5,119 @@ const axios = require('axios');
  * - 안정적인 JSON API로 거래대금, 등락률 등 실시간 데이터 제공
  * - HTML 스크래핑보다 빠르고 안정적
  * - NXT 프리마켓/애프터마켓 시세 지원 (08:00~20:00)
+ * - VI(변동성완화장치) 발동 상태 지원
  */
+
+/**
+ * VI(변동성완화장치) 상태 코드 정의
+ * - 네이버 금융 API의 tradeStopType.name 필드 기준
+ */
+const VI_STATUS = {
+    TRADING: 'TRADING',           // 정상 거래
+    VI_STATIC: 'VI_STATIC',       // 정적 VI 발동 (전일 종가 대비 10% 이상 변동)
+    VI_DYNAMIC: 'VI_DYNAMIC',     // 동적 VI 발동 (직전가 대비 급변동)
+    HALT: 'HALT',                 // 거래 정지
+    SUSPENDED: 'SUSPENDED'        // 거래 중단
+};
+
+/**
+ * tradeStopType 필드에서 VI 상태 파싱
+ * @param {Object} tradeStopType - { code, text, name }
+ * @returns {Object} { isVI: boolean, viType: string, viText: string }
+ */
+function parseViStatus(tradeStopType) {
+    if (!tradeStopType) {
+        return { isVI: false, viType: null, viText: null };
+    }
+
+    const name = tradeStopType.name || '';
+    const text = tradeStopType.text || '';
+    const code = tradeStopType.code || '';
+
+    // VI 발동 여부 확인
+    // code 값: 1=정상거래, 2=정적VI, 3=동적VI, 4=거래정지 등 (추정)
+    // name 값: TRADING, VI_STATIC, VI_DYNAMIC, HALT 등
+    const isVI = name.includes('VI') ||
+                 code === '2' || code === '3' ||
+                 name === 'HALT' || name === 'SUSPENDED';
+
+    let viType = null;
+    let viText = null;
+
+    if (name.includes('STATIC') || code === '2') {
+        viType = 'STATIC';
+        viText = '정적VI';
+    } else if (name.includes('DYNAMIC') || code === '3') {
+        viType = 'DYNAMIC';
+        viText = '동적VI';
+    } else if (name === 'HALT' || name === 'SUSPENDED') {
+        viType = 'HALT';
+        viText = '거래정지';
+    }
+
+    return { isVI, viType, viText };
+}
+
+/**
+ * compareToPreviousPrice 필드에서 상한가/하한가 상태 파싱
+ * @param {Object} compareToPreviousPrice - { code, text, name }
+ * @returns {Object} { isLimit: boolean, limitType: string, limitText: string }
+ */
+function parseLimitStatus(compareToPreviousPrice) {
+    if (!compareToPreviousPrice) {
+        return { isLimit: false, limitType: null, limitText: null };
+    }
+
+    const name = compareToPreviousPrice.name || '';
+    const code = compareToPreviousPrice.code || '';
+
+    // 상한가: code='1', name='UPPER_LIMIT'
+    // 하한가: code='5' (하락) 또는 name='LOWER_LIMIT'
+    let isLimit = false;
+    let limitType = null;
+    let limitText = null;
+
+    if (name === 'UPPER_LIMIT' || code === '1') {
+        isLimit = true;
+        limitType = 'UPPER';
+        limitText = '상한가';
+    } else if (name === 'LOWER_LIMIT') {
+        isLimit = true;
+        limitType = 'LOWER';
+        limitText = '하한가';
+    }
+
+    return { isLimit, limitType, limitText };
+}
+
+/**
+ * 네이버 모바일 API에서 VI/상한가 정보 조회 (fallback용)
+ * @param {string} code - 종목 코드
+ * @returns {Object|null} { isVI, viType, viText, isLimit, limitType, limitText }
+ */
+async function fetchBasicInfo(code) {
+    try {
+        const url = `https://m.stock.naver.com/api/stock/${code}/basic`;
+        const response = await axios.get(url, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            },
+            timeout: 3000
+        });
+
+        const data = response.data;
+        const viStatus = parseViStatus(data.tradeStopType);
+        const limitStatus = parseLimitStatus(data.compareToPreviousPrice);
+
+        return {
+            ...viStatus,
+            ...limitStatus
+        };
+    } catch (error) {
+        // 실패해도 무시 (fallback이므로)
+        return null;
+    }
+}
 
 /**
  * 현재 시장 상태 판정 (한국 시간 기준)
@@ -106,6 +218,32 @@ async function fetchStockByCode(code, options = {}) {
 
             // NXT 시세 정보 파싱
             const nxtInfo = parseNxtPriceInfo(data.nxtOverMarketPriceInfo);
+
+            // VI 상태 파싱 (NXT 정보에서 먼저 시도)
+            let viStatus = parseViStatus(data.nxtOverMarketPriceInfo?.tradeStopType);
+
+            // 상한가/하한가 상태 파싱 (rf 필드: 1=상한가, 4=하락, 5=하한가)
+            let limitStatus = { isLimit: false, limitType: null, limitText: null };
+            if (data.rf === '1' && data.nv === data.ul) {
+                // 현재가가 상한가와 같으면 상한가
+                limitStatus = { isLimit: true, limitType: 'UPPER', limitText: '상한가' };
+            } else if (data.rf === '5' || (data.nv === data.ll && data.ll > 0)) {
+                // 하한가
+                limitStatus = { isLimit: true, limitType: 'LOWER', limitText: '하한가' };
+            }
+
+            // NXT 정보가 없으면 basic API로 VI/상한가 정보 보완
+            if (!data.nxtOverMarketPriceInfo && !viStatus.isVI) {
+                const basicInfo = await fetchBasicInfo(code);
+                if (basicInfo) {
+                    if (basicInfo.isVI) {
+                        viStatus = { isVI: basicInfo.isVI, viType: basicInfo.viType, viText: basicInfo.viText };
+                    }
+                    if (basicInfo.isLimit && !limitStatus.isLimit) {
+                        limitStatus = { isLimit: basicInfo.isLimit, limitType: basicInfo.limitType, limitText: basicInfo.limitText };
+                    }
+                }
+            }
 
             // DEBUG 로그 (특정 종목만)
             if (['042940', '017000', '277810', '454910'].includes(code)) {
@@ -213,7 +351,15 @@ async function fetchStockByCode(code, options = {}) {
                 high: high,
                 low: low,
                 marketStatus: marketStatus,
-                nxtInfo: nxtInfo // 원본 NXT 정보 (디버깅/표시용)
+                nxtInfo: nxtInfo, // 원본 NXT 정보 (디버깅/표시용)
+                // VI(변동성완화장치) 정보
+                isVI: viStatus.isVI,
+                viType: viStatus.viType,   // 'STATIC' | 'DYNAMIC' | 'HALT' | null
+                viText: viStatus.viText,   // '정적VI' | '동적VI' | '거래정지' | null
+                // 상한가/하한가 정보
+                isLimit: limitStatus.isLimit,
+                limitType: limitStatus.limitType,   // 'UPPER' | 'LOWER' | null
+                limitText: limitStatus.limitText    // '상한가' | '하한가' | null
             };
         }
 
@@ -285,5 +431,9 @@ module.exports = {
     fetchMultipleStocks,
     searchStockCode,
     getMarketStatus,
-    parseNxtPriceInfo
+    parseNxtPriceInfo,
+    parseViStatus,
+    parseLimitStatus,
+    fetchBasicInfo,
+    VI_STATUS
 };
