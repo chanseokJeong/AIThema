@@ -2,6 +2,33 @@ import React from 'react';
 import { calculateThemeScore } from '../utils/calculation';
 import { TrendingUp, TrendingDown, Star, AlertTriangle } from 'lucide-react';
 
+// 분할 테마 정보 배지 컴포넌트
+const SplitInfoBadge = ({ splitInfo }) => {
+    if (!splitInfo || splitInfo.totalParts <= 1) return null;
+
+    return (
+        <span
+            className="split-info-badge"
+            title={`${splitInfo.originalName} 테마가 ${splitInfo.totalParts}개로 분할됨 (전체 ${splitInfo.totalStocks}종목)`}
+            style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '3px',
+                padding: '2px 6px',
+                borderRadius: '4px',
+                fontSize: '10px',
+                fontWeight: '500',
+                backgroundColor: 'rgba(255, 215, 0, 0.2)',
+                color: '#FFD700',
+                border: '1px solid rgba(255, 215, 0, 0.4)',
+                marginLeft: '6px'
+            }}
+        >
+            {splitInfo.partNumber}/{splitInfo.totalParts}
+        </span>
+    );
+};
+
 // 별 등급 컴포넌트
 const StarRating = ({ stars, reason }) => {
     if (!stars || stars === 0) return null;
@@ -63,6 +90,36 @@ const LimitBadge = ({ limitType, limitText }) => {
         >
             {isUpper ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
             {style.text}
+        </span>
+    );
+};
+
+// NXT 시장 배지 컴포넌트 (프리마켓/애프터마켓)
+const NxtBadge = ({ marketStatus }) => {
+    if (!marketStatus || marketStatus === 'REGULAR' || marketStatus === 'CLOSED') return null;
+
+    const config = {
+        PRE_MARKET: {
+            label: 'NXT',
+            className: 'pre-market',
+            title: 'NXT 프리마켓 시세 (08:00~09:00)'
+        },
+        AFTER_MARKET: {
+            label: 'NXT',
+            className: 'after-market',
+            title: 'NXT 애프터마켓 시세 (15:40~20:00)'
+        }
+    };
+
+    const statusConfig = config[marketStatus];
+    if (!statusConfig) return null;
+
+    return (
+        <span
+            className={`nxt-badge ${statusConfig.className}`}
+            title={statusConfig.title}
+        >
+            {statusConfig.label}
         </span>
     );
 };
@@ -149,6 +206,7 @@ const ThemeCard = ({ theme, showScore, onToggleDisplay }) => {
                     <div className="theme-title" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                         <StarRating stars={theme.stars} reason={theme.starReason} />
                         <h3 className="theme-name">{theme.name}</h3>
+                        <SplitInfoBadge splitInfo={theme.splitInfo} />
                     </div>
                     <div
                         className={`theme-score ${isPositive ? 'positive' : 'negative'}`}
@@ -199,6 +257,7 @@ const ThemeCard = ({ theme, showScore, onToggleDisplay }) => {
                             <div className="stock-row top-row">
                                 <span className="stock-name">
                                     {stock.name}
+                                    {stock.marketStatus && <NxtBadge marketStatus={stock.marketStatus} />}
                                     {stock.isLimit && <LimitBadge limitType={stock.limitType} limitText={stock.limitText} />}
                                     {stock.isVI && <VIBadge viType={stock.viType} viText={stock.viText} />}
                                     {isHotStock && !stock.isVI && !stock.isLimit && <span style={{ marginLeft: '4px', color: '#ffcc00' }}>🔥</span>}

@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ThemeCard from './components/ThemeCard';
+import MarketStatusBadge from './components/MarketStatusBadge';
 
 function App() {
   const [themes, setThemes] = useState([]);
   const [showScore, setShowScore] = useState(true);
   const [dataVersion, setDataVersion] = useState(0);
+  const [marketStatus, setMarketStatus] = useState('CLOSED');
+  const [lastUpdated, setLastUpdated] = useState(null);
   const lastVersionRef = useRef(0);
 
   useEffect(() => {
@@ -12,9 +15,17 @@ function App() {
       fetch('/api/themes')
         .then((res) => res.json())
         .then((data) => {
-          // 새 API 형식: { themes: [], lastUpdated: number, version: number }
+          // 새 API 형식: { themes: [], lastUpdated: number, version: number, marketStatus: string }
           const themesData = data.themes || data; // 이전 형식 호환
           const newVersion = data.version || Date.now();
+
+          // 시장 상태 업데이트
+          if (data.marketStatus) {
+            setMarketStatus(data.marketStatus);
+          }
+          if (data.lastUpdated) {
+            setLastUpdated(data.lastUpdated);
+          }
 
           // 버전이 변경되었으면 테마 완전 갱신 (이전 상태 무시)
           if (newVersion !== lastVersionRef.current) {
@@ -39,7 +50,10 @@ function App() {
   return (
     <div className="app-container">
       <header className="app-header">
-        <h1>AI Thema View</h1>
+        <div className="header-main">
+          <h1>AI Thema View</h1>
+          <MarketStatusBadge status={marketStatus} lastUpdated={lastUpdated} />
+        </div>
         <p>Real-time Market Theme Strength Index</p>
       </header>
       <div className="theme-grid">

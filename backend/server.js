@@ -253,39 +253,59 @@ async function updateThemes() {
         });
 
         const enrichedThemes = await Promise.all(analyzedThemes.map(async (theme) => {
-            // ⭐ FIX: 중복 종목 제거 (객체 배열/string 배열 모두 처리)
+            // ⭐ FIX: 중복 종목 제거 시 상한가/하한가/VI 정보 보존
             // theme.stocks가 객체 배열일 수도 있고 string 배열일 수도 있음
-            const seenNames = new Set();
-            const uniqueStockNames = [];
+            const stockMap = new Map(); // name → stock object (상한가/VI 정보 포함된 것 우선)
             for (const stock of theme.stocks) {
                 const name = typeof stock === 'string' ? stock : stock.name;
-                if (name && !seenNames.has(name)) {
-                    seenNames.add(name);
-                    uniqueStockNames.push(name);
+                if (!name) continue;
+
+                const existing = stockMap.get(name);
+                if (!existing) {
+                    // 최초 발견: 그대로 저장
+                    stockMap.set(name, typeof stock === 'string' ? { name: stock } : stock);
+                } else {
+                    // 중복 발견: 상한가/하한가/VI 정보가 있는 쪽으로 업데이트
+                    const stockObj = typeof stock === 'string' ? { name: stock } : stock;
+                    if ((stockObj.isLimit && !existing.isLimit) ||
+                        (stockObj.isVI && !existing.isVI) ||
+                        (stockObj.limitType && !existing.limitType)) {
+                        // 새 종목에 상한가/VI 정보가 있으면 기존 정보와 병합
+                        stockMap.set(name, { ...existing, ...stockObj });
+                    }
                 }
             }
-            console.log(`  Theme "${theme.name}": ${theme.stocks.length} stocks → ${uniqueStockNames.length} unique`);
+            const uniqueStocks = Array.from(stockMap.values());
+            console.log(`  Theme "${theme.name}": ${theme.stocks.length} stocks → ${uniqueStocks.length} unique`);
 
-            const enrichedStocks = await Promise.all(uniqueStockNames.map(async (stockName) => {
+            const enrichedStocks = await Promise.all(uniqueStocks.map(async (stockInfo) => {
+                const stockName = stockInfo.name;
+                // 원본 종목 정보에서 상한가/하한가/VI 정보 추출 (보존용)
+                const originalLimitInfo = {
+                    isLimit: stockInfo.isLimit || false,
+                    limitType: stockInfo.limitType || null,
+                    limitText: stockInfo.limitText || null,
+                    isVI: stockInfo.isVI || false,
+                    viType: stockInfo.viType || null,
+                    viText: stockInfo.viText || null
+                };
+
                 // 균형잡힌 급등주 데이터에서 먼저 찾기
                 const hotData = enrichStockWithHotData(stockName, balancedHotStocks);
 
                 // ⭐ NEW: 캔들 차트를 위해 상세 데이터(시가/고가/저가)가 필요함
-                // 급등주 데이터(hotData)에는 시가/고가/저가가 없으므로, 최종 테마에 선정된 종목은
-                // 반드시 실시간 상세 조회를 수행하여 OHLC 데이터를 확보한다.
-                // (단, 성능을 위해 병렬로 처리되므로 큰 부담은 아님)
-
                 console.log(`  Fetching detailed OHLC for ${stockName}...`);
                 const liveData = await fetchStockPrice(stockName);
 
                 // 실시간 조회 실패 시 hotData라도 사용 (fallback)
                 if (!liveData || liveData.price === 0) {
-                    if (hotData) return hotData;
+                    if (hotData) {
+                        // ⭐ FIX: hotData에 원본 상한가/VI 정보 병합
+                        return { ...hotData, ...originalLimitInfo, isLimit: hotData.isLimit || originalLimitInfo.isLimit, isVI: hotData.isVI || originalLimitInfo.isVI };
+                    }
                 }
 
                 // ⭐ NEW: 필터링 로직 개선 (눌림목 포함)
-                // 1. 기본: 0% 이상 (상승 흐름)
-                // 2. 눌림목: -5% 이내이면서 거래대금 300억 이상 (주도주의 건전한 조정)
                 const amount = liveData.amount || 0;
                 const isDipBuyingCandidate = liveData.rate >= -10.0 && amount >= 300;
 
@@ -293,19 +313,30 @@ async function updateThemes() {
                     return null;
                 }
 
-                return liveData;
+                // ⭐ FIX: liveData와 원본 상한가/VI 정보 병합 (liveData 우선, 없으면 원본 사용)
+                return {
+                    ...liveData,
+                    isLimit: liveData.isLimit || originalLimitInfo.isLimit,
+                    limitType: liveData.limitType || originalLimitInfo.limitType,
+                    limitText: liveData.limitText || originalLimitInfo.limitText,
+                    isVI: liveData.isVI || originalLimitInfo.isVI,
+                    viType: liveData.viType || originalLimitInfo.viType,
+                    viText: liveData.viText || originalLimitInfo.viText
+                };
             }));
 
             // null 제거 (필터링된 종목 제외)
             let validStocks = enrichedStocks.filter(s => s !== null);
 
-            // ⭐ 등락률 기준 정렬 후 최대 5개로 제한 -> 가중치 정렬로 변경 (거래대금 고려)
+            // ⭐ 등락률 기준 정렬 (가중치: 거래대금 고려)
+            // NOTE: 여기서는 15개까지 유지 (강세 테마 분할을 위해)
+            // 최종 5개 제한은 theme_selector의 splitLargeThemes에서 처리
             validStocks.sort((a, b) => {
                 const scoreA = (a.rate || 0) + ((a.amount || 0) / 100);
                 const scoreB = (b.rate || 0) + ((b.amount || 0) / 100);
                 return scoreB - scoreA;
             });
-            validStocks = validStocks.slice(0, 5);
+            validStocks = validStocks.slice(0, 15); // 분할 고려하여 15개 유지
 
             // Step 5: 점수 계산 (평균 등락률) 및 총 거래대금 계산
             const score = calculateThemeScore(validStocks);
@@ -398,15 +429,42 @@ async function updatePrices() {
 
         const enrichedThemes = await Promise.all(cachedThemes.map(async (theme) => {
             const enrichedStocks = await Promise.all(theme.stocks.map(async (stock) => {
+                // ⭐ FIX: 원본 상한가/하한가/VI 정보 보존
+                const originalLimitInfo = {
+                    isLimit: stock.isLimit || false,
+                    limitType: stock.limitType || null,
+                    limitText: stock.limitText || null,
+                    isVI: stock.isVI || false,
+                    viType: stock.viType || null,
+                    viText: stock.viText || null
+                };
+
                 // 균형잡힌 급등주 데이터에서 찾기
                 const hotData = enrichStockWithHotData(stock.name, balancedHotStocks);
                 if (hotData) {
-                    return hotData;
+                    // ⭐ FIX: hotData와 원본 상한가/VI 정보 병합
+                    return {
+                        ...hotData,
+                        isLimit: hotData.isLimit || originalLimitInfo.isLimit,
+                        limitType: hotData.limitType || originalLimitInfo.limitType,
+                        limitText: hotData.limitText || originalLimitInfo.limitText,
+                        isVI: hotData.isVI || originalLimitInfo.isVI,
+                        viType: hotData.viType || originalLimitInfo.viType,
+                        viText: hotData.viText || originalLimitInfo.viText
+                    };
                 }
                 // 원본 급등주에서 찾기
                 const rawHotData = enrichStockWithHotData(stock.name, rawHotStocks);
                 if (rawHotData) {
-                    return rawHotData;
+                    return {
+                        ...rawHotData,
+                        isLimit: rawHotData.isLimit || originalLimitInfo.isLimit,
+                        limitType: rawHotData.limitType || originalLimitInfo.limitType,
+                        limitText: rawHotData.limitText || originalLimitInfo.limitText,
+                        isVI: rawHotData.isVI || originalLimitInfo.isVI,
+                        viType: rawHotData.viType || originalLimitInfo.viType,
+                        viText: rawHotData.viText || originalLimitInfo.viText
+                    };
                 }
                 // 실시간 시세 조회
                 const liveData = await fetchStockPrice(stock.name);
@@ -419,7 +477,16 @@ async function updatePrices() {
                     return null;
                 }
 
-                return liveData;
+                // ⭐ FIX: liveData와 원본 상한가/VI 정보 병합
+                return {
+                    ...liveData,
+                    isLimit: liveData.isLimit || originalLimitInfo.isLimit,
+                    limitType: liveData.limitType || originalLimitInfo.limitType,
+                    limitText: liveData.limitText || originalLimitInfo.limitText,
+                    isVI: liveData.isVI || originalLimitInfo.isVI,
+                    viType: liveData.viType || originalLimitInfo.viType,
+                    viText: liveData.viText || originalLimitInfo.viText
+                };
             }));
 
             // null 제거

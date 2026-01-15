@@ -17,6 +17,14 @@ const OTHER_SECTOR_THEMES = ['화장품', '게임', '엔터/미디어', '금융/
 // 특수 분류 테마명 (선정에서 제외)
 const SPECIAL_THEME_NAMES = ['개별이슈', '기타', '기타섹터', '신규상장'];
 
+// 테마 분할 설정
+const SPLIT_CONFIG = {
+    minStocksToSplit: 6,    // 이 개수 이상이면 분할 검토
+    stocksPerPart: 5,       // 파트당 종목 수
+    maxParts: 3,            // 최대 분할 수
+    minScoreToSplit: 5.0    // 이 점수 이상이어야 분할 (강세 테마만)
+};
+
 /**
  * 테마 순위 점수 계산
  * 공식: volumeScore + rateScore + surgeBonus + limitUpBonus
@@ -327,6 +335,94 @@ function processIndividualTheme(allThemes, options = {}) {
 }
 
 /**
+ * 강세 테마 분할 (종목이 많은 테마를 여러 파트로 나눔)
+ * 예: 로봇(12종목) -> 로봇①(5종목), 로봇②(5종목), 로봇③(2종목)
+ *
+ * @param {Array} themes - 테마 배열
+ * @param {Object} config - 분할 설정 (SPLIT_CONFIG)
+ * @returns {Array} - 분할된 테마 배열
+ */
+function splitLargeThemes(themes, config = SPLIT_CONFIG) {
+    const result = [];
+
+    for (const theme of themes) {
+        const stocks = theme.stocks || [];
+        const score = theme.score || 0;
+
+        // 분할 조건 체크: 종목 수 >= 최소 기준 AND 점수 >= 최소 점수
+        const shouldSplit = stocks.length >= config.minStocksToSplit &&
+                           score >= config.minScoreToSplit;
+
+        if (!shouldSplit) {
+            // 분할 불필요: 그대로 추가 (5개로 제한)
+            result.push({
+                ...theme,
+                stocks: stocks.slice(0, config.stocksPerPart)
+            });
+            continue;
+        }
+
+        // 종목을 등락률 + 거래대금 가중치로 정렬
+        const sortedStocks = [...stocks].sort((a, b) => {
+            const scoreA = (a.rate || 0) * 2 + ((a.amount || 0) / 100);
+            const scoreB = (b.rate || 0) * 2 + ((b.amount || 0) / 100);
+            return scoreB - scoreA;
+        });
+
+        // 파트 수 계산
+        const partCount = Math.min(
+            Math.ceil(sortedStocks.length / config.stocksPerPart),
+            config.maxParts
+        );
+
+        console.log(`  [Split] ${theme.name}: ${stocks.length}종목 -> ${partCount}파트로 분할`);
+
+        // 파트별로 테마 생성
+        for (let i = 0; i < partCount; i++) {
+            const startIdx = i * config.stocksPerPart;
+            const partStocks = sortedStocks.slice(startIdx, startIdx + config.stocksPerPart);
+
+            if (partStocks.length === 0) continue;
+
+            // 파트 점수 계산
+            const partScore = partStocks.reduce((sum, s) => sum + (s.rate || 0), 0) / partStocks.length;
+            const partVolume = partStocks.reduce((sum, s) => sum + (s.amount || 0), 0);
+
+            // 파트 이름: 로봇①, 로봇②, 로봇③
+            const partLabels = ['①', '②', '③'];
+            const partName = partCount > 1 ? `${theme.name}${partLabels[i]}` : theme.name;
+
+            // 헤드라인 생성
+            const topStock = partStocks[0];
+            const partHeadline = topStock
+                ? `${topStock.name} ${topStock.rate >= 0 ? '+' : ''}${(topStock.rate || 0).toFixed(1)}% 등 ${partName} 강세`
+                : theme.headline;
+
+            result.push({
+                ...theme,
+                id: `${theme.id || theme.name}_part${i + 1}`,
+                name: partName,
+                headline: partHeadline,
+                stocks: partStocks,
+                score: partScore,
+                totalVolume: partVolume,
+                // 분할 메타 정보 (프론트엔드에서 합산용)
+                splitInfo: {
+                    originalName: theme.name,
+                    partNumber: i + 1,
+                    totalParts: partCount,
+                    totalStocks: sortedStocks.length
+                }
+            });
+
+            console.log(`    ${partName}: ${partStocks.length}종목, score ${partScore.toFixed(2)}, volume ${partVolume}억`);
+        }
+    }
+
+    return result;
+}
+
+/**
  * 최종 10개 테마 선정
  * @param {Array} allThemes - 전체 테마 배열
  * @param {Array} ipoStocks - IPO 종목 배열
@@ -348,8 +444,13 @@ async function selectFinalThemes(allThemes, ipoStocks, hotStocks, options = {}) 
 
     // 1. 핵심 테마 7개 선정 (최소 4종목 보장)
     const coreThemes = selectCoreThemes(allThemes, maxCoreThemes, hotStocks, themeSectors);
-    result.push(...coreThemes);
 
+    // 1.5 ⭐ NEW: 강세 테마 분할 (종목 6개 이상 + 점수 5% 이상인 테마)
+    console.log('Splitting large themes...');
+    const splitThemes = splitLargeThemes(coreThemes, SPLIT_CONFIG);
+    result.push(...splitThemes);
+
+    // 핵심 테마명 추출 (분할된 것 포함)
     const coreNames = coreThemes.map(t => t.name);
 
     // 2. 개별이슈 추가
@@ -392,7 +493,9 @@ module.exports = {
     createIPOTheme,
     processIndividualTheme,
     selectFinalThemes,
+    splitLargeThemes,
     CORE_THEME_CANDIDATES,
     OTHER_SECTOR_THEMES,
-    SPECIAL_THEME_NAMES
+    SPECIAL_THEME_NAMES,
+    SPLIT_CONFIG
 };

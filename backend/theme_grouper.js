@@ -238,7 +238,7 @@ function groupThemes(themes, maxThemes = 10) {
         group.count++;
         group.isHot = group.isHot || theme.isHot;
 
-        // 종목 병합 (중복 제거)
+        // 종목 병합 (중복 제거 + 상한가/하한가/VI 정보 보존)
         if (theme.stocks) {
             theme.stocks.forEach(stock => {
                 const stockName = typeof stock === 'string' ? stock : stock.name;
@@ -248,6 +248,31 @@ function groupThemes(themes, maxThemes = 10) {
 
                     const rate = typeof stock === 'object' ? (stock.rate || 0) : 0;
                     if (rate > group.maxRate) group.maxRate = rate;
+                } else {
+                    // ⭐ FIX: 중복 종목이지만 상한가/하한가/VI 정보가 있으면 업데이트
+                    if (typeof stock === 'object' && (stock.isLimit || stock.isVI)) {
+                        const existingIndex = group.stocks.findIndex(s =>
+                            (typeof s === 'string' ? s : s.name) === stockName
+                        );
+                        if (existingIndex !== -1) {
+                            const existing = group.stocks[existingIndex];
+                            if (typeof existing === 'object') {
+                                // 기존 객체에 상한가/VI 정보 병합
+                                group.stocks[existingIndex] = {
+                                    ...existing,
+                                    isLimit: existing.isLimit || stock.isLimit,
+                                    limitType: existing.limitType || stock.limitType,
+                                    limitText: existing.limitText || stock.limitText,
+                                    isVI: existing.isVI || stock.isVI,
+                                    viType: existing.viType || stock.viType,
+                                    viText: existing.viText || stock.viText
+                                };
+                            } else {
+                                // 기존이 string이면 객체로 교체
+                                group.stocks[existingIndex] = stock;
+                            }
+                        }
+                    }
                 }
             });
         }
@@ -294,22 +319,37 @@ function groupThemes(themes, maxThemes = 10) {
             }
         }
 
-        // ⭐ FIX: 최종 결과에서 중복 종목 확실히 제거
-        const uniqueStocks = [];
-        const seenStockNames = new Set();
+        // ⭐ FIX: 최종 결과에서 중복 종목 확실히 제거 + 상한가/VI 정보 보존
+        const stockMap = new Map();
         for (const stock of group.stocks) {
             const stockName = typeof stock === 'string' ? stock : stock.name;
-            if (stockName && !seenStockNames.has(stockName)) {
-                seenStockNames.add(stockName);
-                uniqueStocks.push(stock);
+            if (!stockName) continue;
+
+            const existing = stockMap.get(stockName);
+            if (!existing) {
+                stockMap.set(stockName, stock);
+            } else if (typeof stock === 'object') {
+                // 상한가/하한가/VI 정보가 있는 쪽으로 병합
+                const existingObj = typeof existing === 'object' ? existing : { name: existing };
+                stockMap.set(stockName, {
+                    ...existingObj,
+                    ...stock,
+                    isLimit: existingObj.isLimit || stock.isLimit,
+                    limitType: existingObj.limitType || stock.limitType,
+                    limitText: existingObj.limitText || stock.limitText,
+                    isVI: existingObj.isVI || stock.isVI,
+                    viType: existingObj.viType || stock.viType,
+                    viText: existingObj.viText || stock.viText
+                });
             }
         }
+        const uniqueStocks = Array.from(stockMap.values());
 
         result.push({
             id: name,
             name: name,
             headline: headline,
-            stocks: uniqueStocks.slice(0, 10), // 최대 10개 종목
+            stocks: uniqueStocks.slice(0, 15), // 분할 고려하여 15개 유지 (최종 제한은 theme_selector)
             score: avgScore,
             isHot: group.isHot,
             isConglomerate: group.isConglomerate || false,
