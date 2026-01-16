@@ -178,54 +178,13 @@ async function fetchFromNaver(code) {
 
 /**
  * 네이버 금융에서 공매도 데이터 스크래핑
- * URL: https://finance.naver.com/item/short.naver?code=005930
+ * NOTE: 네이버 금융에 공매도 페이지가 없어서 비활성화됨
+ * 공매도 데이터는 pykrx를 통해서만 수집 가능
  */
 async function fetchShortFromNaver(code) {
-    try {
-        const url = `https://finance.naver.com/item/short.naver?code=${code}`;
-
-        const response = await axios.get(url, {
-            responseType: 'arraybuffer',
-            timeout: 5000,
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-        });
-
-        const html = iconv.decode(response.data, 'euc-kr');
-        const $ = cheerio.load(html);
-
-        // 공매도 테이블 파싱
-        const table = $('table.type2');
-        const rows = table.find('tbody tr');
-
-        let shortVolume = 0;
-        let shortRatio = 0;
-
-        if (rows.length > 0) {
-            const firstRow = rows.eq(0);
-            const cells = firstRow.find('td');
-
-            if (cells.length >= 4) {
-                // 공매도량
-                const volText = cells.eq(1).text().replace(/[^0-9]/g, '');
-                shortVolume = parseInt(volText) || 0;
-
-                // 공매도비중
-                const ratioText = cells.eq(3).text().replace(/[^0-9.]/g, '');
-                shortRatio = parseFloat(ratioText) || 0;
-            }
-        }
-
-        return {
-            shortVolume,
-            shortRatio,
-            source: 'naver'
-        };
-    } catch (error) {
-        console.error(`[Short] Naver fetch error for ${code}:`, error.message);
-        return null;
-    }
+    // 네이버 금융에 공매도 페이지가 없음 (404)
+    // pykrx가 작동하면 거기서 공매도 데이터를 수집
+    return null;
 }
 
 /**
