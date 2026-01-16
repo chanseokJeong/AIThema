@@ -352,58 +352,9 @@ async function updateThemes() {
             };
         }));
 
-        // Step 4.5: ⭐ NEW - 수급 데이터 수집 (외국인/기관 순매수, 공매도)
-        console.log('Step 4.5: Fetching investor data (supply/demand)...');
-        try {
-            // 모든 테마의 종목 코드 수집
-            const allStockCodes = [];
-            const codeToStockMap = new Map();
-
-            enrichedThemes.forEach(theme => {
-                theme.stocks.forEach(stock => {
-                    if (stock.code && !codeToStockMap.has(stock.code)) {
-                        allStockCodes.push(stock.code);
-                        codeToStockMap.set(stock.code, stock);
-                    }
-                });
-            });
-
-            console.log(`  Fetching investor data for ${allStockCodes.length} stocks...`);
-
-            // 일괄 수급 데이터 조회
-            const investorDataList = await getBulkInvestorData(allStockCodes);
-
-            // 종목에 수급 데이터 병합
-            let enrichedCount = 0;
-            investorDataList.forEach(data => {
-                if (data && data.code) {
-                    const stock = codeToStockMap.get(data.code);
-                    if (stock) {
-                        stock.investorData = data;
-                        enrichedCount++;
-                    }
-                }
-            });
-
-            console.log(`  Investor data enriched: ${enrichedCount}/${allStockCodes.length} stocks`);
-
-            // 테마별 점수 재계산 (수급 보너스 포함)
-            enrichedThemes.forEach(theme => {
-                const scoreResult = calculateThemeScore(theme.stocks, true);
-                if (typeof scoreResult === 'object') {
-                    theme.score = scoreResult.score;
-                    theme.baseScore = scoreResult.baseScore;
-                    theme.supplyBonus = scoreResult.supplyBonus;
-                    theme.shortPenalty = scoreResult.shortPenalty;
-                }
-
-                // 테마 수준의 수급 요약 계산
-                const investorSummary = calculateThemeInvestorSummary(theme.stocks);
-                theme.investorSummary = investorSummary;
-            });
-        } catch (investorError) {
-            console.warn('Investor data fetch failed (non-critical):', investorError.message);
-        }
+        // Step 4.5: ⭐ 수급 데이터는 백그라운드에서 수집 (테마 표시 먼저)
+        // 수급 데이터 수집을 백그라운드로 분리하여 테마 데이터를 먼저 표시
+        console.log('Step 4.5: Investor data will be fetched in background...');
 
         // Step 5.5: ⭐ 테마 그룹핑 (유사 테마 통합 + 재벌 그룹 감지)
         console.log('Step 5.5: Grouping similar themes...');
@@ -452,8 +403,72 @@ async function updateThemes() {
         lastUpdated = Date.now();
         console.log(`Theme update complete. Found ${cachedThemes.length} themes.`);
         console.log('=== Theme Update Finished ===\n');
+
+        // ⭐ 백그라운드에서 수급 데이터 수집 시작 (테마 표시 후)
+        updateInvestorDataInBackground();
     } catch (error) {
         console.error('Theme update failed:', error);
+    }
+}
+
+// ⭐ 백그라운드 수급 데이터 수집 함수
+async function updateInvestorDataInBackground() {
+    if (cachedThemes.length === 0) return;
+
+    console.log('=== Background Investor Data Update Started ===');
+
+    try {
+        // 모든 테마의 종목 코드 수집
+        const allStockCodes = [];
+        const codeToStockMap = new Map();
+
+        cachedThemes.forEach(theme => {
+            theme.stocks.forEach(stock => {
+                if (stock.code && !codeToStockMap.has(stock.code)) {
+                    allStockCodes.push(stock.code);
+                    codeToStockMap.set(stock.code, stock);
+                }
+            });
+        });
+
+        console.log(`[Background] Fetching investor data for ${allStockCodes.length} stocks...`);
+
+        // 일괄 수급 데이터 조회
+        const investorDataList = await getBulkInvestorData(allStockCodes);
+
+        // 종목에 수급 데이터 병합
+        let enrichedCount = 0;
+        investorDataList.forEach(data => {
+            if (data && data.code) {
+                const stock = codeToStockMap.get(data.code);
+                if (stock) {
+                    stock.investorData = data;
+                    enrichedCount++;
+                }
+            }
+        });
+
+        console.log(`[Background] Investor data enriched: ${enrichedCount}/${allStockCodes.length} stocks`);
+
+        // 테마별 점수 재계산 (수급 보너스 포함)
+        cachedThemes.forEach(theme => {
+            const scoreResult = calculateThemeScore(theme.stocks, true);
+            if (typeof scoreResult === 'object') {
+                theme.score = scoreResult.score;
+                theme.baseScore = scoreResult.baseScore;
+                theme.supplyBonus = scoreResult.supplyBonus;
+                theme.shortPenalty = scoreResult.shortPenalty;
+            }
+
+            // 테마 수준의 수급 요약 계산
+            const investorSummary = calculateThemeInvestorSummary(theme.stocks);
+            theme.investorSummary = investorSummary;
+        });
+
+        lastUpdated = Date.now();
+        console.log('=== Background Investor Data Update Finished ===\n');
+    } catch (error) {
+        console.warn('[Background] Investor data update failed (non-critical):', error.message);
     }
 }
 
