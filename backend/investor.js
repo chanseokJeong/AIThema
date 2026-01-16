@@ -51,7 +51,20 @@ async function checkPython() {
 async function fetchFromPython(command, code) {
     return new Promise((resolve, reject) => {
         const scriptPath = path.join(__dirname, 'python', 'stock_data.py');
-        const python = spawn('python', [scriptPath, command, code]);
+
+        // 가상 환경 Python 경로 우선 시도
+        const venvPython = path.join(__dirname, 'python', 'venv', 'bin', 'python');
+        const venvPythonWin = path.join(__dirname, 'python', 'venv', 'Scripts', 'python.exe');
+
+        // 가상 환경 Python 존재 여부 확인
+        let pythonCmd = 'python';
+        if (require('fs').existsSync(venvPython)) {
+            pythonCmd = venvPython;  // Linux/Mac 가상 환경
+        } else if (require('fs').existsSync(venvPythonWin)) {
+            pythonCmd = venvPythonWin;  // Windows 가상 환경
+        }
+
+        const python = spawn(pythonCmd, [scriptPath, command, code]);
 
         let stdout = '';
         let stderr = '';

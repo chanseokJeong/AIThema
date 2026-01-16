@@ -57,10 +57,24 @@ Python이 없어도 기본 기능은 작동합니다 (네이버 금융 스크래
    python --version
    ```
 4. pykrx 라이브러리 설치:
+
+   **Windows:**
    ```cmd
    cd C:\AIThemaView\backend\python
+   python -m venv venv
+   venv\Scripts\activate
    pip install -r requirements.txt
    ```
+
+   **Linux/Mac (가상 환경 필수):**
+   ```bash
+   cd /path/to/AIThemaView/backend/python
+   python3 -m venv venv
+   source venv/bin/activate
+   pip install -r requirements.txt
+   ```
+
+   > 최신 Linux(Debian 12+, Ubuntu 23.04+)는 PEP 668 정책으로 가상 환경이 필수입니다.
 
 **수집 가능한 추가 데이터:**
 - 외국인/기관/개인 순매수 (당일, 5일 합계)
