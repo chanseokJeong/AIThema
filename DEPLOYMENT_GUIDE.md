@@ -25,6 +25,7 @@ AI Thema View를 Windows PC에 배포하고, 외부에서 접속하기 위한 �
 |------|------|
 | Windows PC | Windows 10/11 권장 |
 | Node.js | v18 이상 (LTS 권장) |
+| Python | v3.8 이상 (수급 데이터용, 선택) |
 | Git | 코드 다운로드용 (선택) |
 | Gemini API Key | https://aistudio.google.com/app/apikey |
 | 고정 내부 IP | 공유기 설정 필요 |
@@ -44,12 +45,34 @@ AI Thema View를 Windows PC에 배포하고, 외부에서 접속하기 위한 �
    npm --version
    ```
 
-### 2.2 Git 설치 (선택)
+### 2.2 Python 설치 (수급 데이터용 - 선택)
+
+Python은 외국인/기관 순매수 및 공매도 데이터 수집에 사용됩니다.
+Python이 없어도 기본 기능은 작동합니다 (네이버 금융 스크래핑 폴백).
+
+1. https://python.org 에서 Python 3.8+ 다운로드
+2. 설치 시 **"Add Python to PATH"** 체크 필수
+3. 설치 확인:
+   ```cmd
+   python --version
+   ```
+4. pykrx 라이브러리 설치:
+   ```cmd
+   cd C:\AIThemaView\backend\python
+   pip install -r requirements.txt
+   ```
+
+**수집 가능한 추가 데이터:**
+- 외국인/기관/개인 순매수 (당일, 5일 합계)
+- 공매도량 및 공매도 비중
+- 기본 재무지표 (PER, PBR, 배당수익률)
+
+### 2.3 Git 설치 (선택)
 
 1. https://git-scm.com/download/win 에서 다운로드
 2. 기본 옵션으로 설치
 
-### 2.3 프로젝트 다운로드
+### 2.4 프로젝트 다운로드
 
 **Git 사용 시:**
 ```cmd

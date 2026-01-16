@@ -1,6 +1,6 @@
 import React from 'react';
 import { calculateThemeScore } from '../utils/calculation';
-import { TrendingUp, TrendingDown, Star, AlertTriangle } from 'lucide-react';
+import { TrendingUp, TrendingDown, Star, AlertTriangle, Users, Building2, Globe, BarChart3 } from 'lucide-react';
 
 // 분할 테마 정보 배지 컴포넌트
 const SplitInfoBadge = ({ splitInfo }) => {
@@ -90,6 +90,138 @@ const LimitBadge = ({ limitType, limitText }) => {
         >
             {isUpper ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
             {style.text}
+        </span>
+    );
+};
+
+// 수급 요약 컴포넌트 (테마 수준)
+const InvestorSummary = ({ investorSummary }) => {
+    if (!investorSummary || investorSummary.dataCount === 0) return null;
+
+    const { foreignNet, institutionNet, bigPlayerNet, supplySignal, shortSignal, avgShortRatio } = investorSummary;
+
+    // 신호에 따른 색상
+    const getSignalStyle = (signal) => {
+        switch (signal) {
+            case 'BUY': return { color: '#FF4D4D', bg: 'rgba(255, 77, 77, 0.15)' };
+            case 'MILD_BUY': return { color: '#FF8C00', bg: 'rgba(255, 140, 0, 0.1)' };
+            case 'SELL': return { color: '#4D79FF', bg: 'rgba(77, 121, 255, 0.15)' };
+            case 'MILD_SELL': return { color: '#6B8CFF', bg: 'rgba(107, 140, 255, 0.1)' };
+            default: return { color: '#888', bg: 'rgba(136, 136, 136, 0.1)' };
+        }
+    };
+
+    const getShortStyle = (signal) => {
+        switch (signal) {
+            case 'HIGH_RISK': return { color: '#FF4444', icon: '⚠️' };
+            case 'CAUTION': return { color: '#FF8800', icon: '⚡' };
+            default: return { color: '#888', icon: '' };
+        }
+    };
+
+    const signalStyle = getSignalStyle(supplySignal);
+    const shortStyle = getShortStyle(shortSignal);
+
+    return (
+        <div
+            className="investor-summary"
+            style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: '6px',
+                padding: '6px 8px',
+                backgroundColor: signalStyle.bg,
+                borderRadius: '6px',
+                marginTop: '6px',
+                fontSize: '11px'
+            }}
+        >
+            {/* 외국인 순매수 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                <Globe size={12} color="#4CAF50" />
+                <span style={{ color: foreignNet >= 0 ? '#FF4D4D' : '#4D79FF' }}>
+                    {foreignNet >= 0 ? '+' : ''}{foreignNet}억
+                </span>
+            </div>
+
+            {/* 기관 순매수 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                <Building2 size={12} color="#2196F3" />
+                <span style={{ color: institutionNet >= 0 ? '#FF4D4D' : '#4D79FF' }}>
+                    {institutionNet >= 0 ? '+' : ''}{institutionNet}억
+                </span>
+            </div>
+
+            {/* 합계 */}
+            <div
+                style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '3px',
+                    padding: '2px 6px',
+                    backgroundColor: signalStyle.bg,
+                    borderRadius: '4px',
+                    border: `1px solid ${signalStyle.color}40`
+                }}
+            >
+                <span style={{ color: signalStyle.color, fontWeight: '600' }}>
+                    {bigPlayerNet >= 0 ? '▲' : '▼'}{Math.abs(bigPlayerNet)}억
+                </span>
+            </div>
+
+            {/* 공매도 경고 */}
+            {shortSignal !== 'NORMAL' && (
+                <div
+                    style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '2px',
+                        padding: '2px 6px',
+                        backgroundColor: 'rgba(255, 68, 68, 0.1)',
+                        borderRadius: '4px',
+                        color: shortStyle.color
+                    }}
+                    title={`공매도 비중 ${avgShortRatio}%`}
+                >
+                    <BarChart3 size={10} />
+                    <span>{avgShortRatio}%</span>
+                    <span>{shortStyle.icon}</span>
+                </div>
+            )}
+        </div>
+    );
+};
+
+// 종목별 수급 미니 배지
+const StockInvestorBadge = ({ investorData }) => {
+    if (!investorData || !investorData.investor) return null;
+
+    const { foreignNet = 0, institutionNet = 0 } = investorData.investor;
+    const total = foreignNet + institutionNet;
+
+    if (Math.abs(total) < 10) return null; // 10억 미만은 표시 안함
+
+    const isPositive = total >= 0;
+
+    return (
+        <span
+            className="stock-investor-badge"
+            title={`외국인: ${foreignNet >= 0 ? '+' : ''}${foreignNet}억 / 기관: ${institutionNet >= 0 ? '+' : ''}${institutionNet}억`}
+            style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '2px',
+                padding: '1px 4px',
+                borderRadius: '3px',
+                fontSize: '9px',
+                fontWeight: '500',
+                backgroundColor: isPositive ? 'rgba(255, 77, 77, 0.2)' : 'rgba(77, 121, 255, 0.2)',
+                color: isPositive ? '#FF6B6B' : '#6B8CFF',
+                marginLeft: '4px'
+            }}
+        >
+            {isPositive ? <TrendingUp size={8} /> : <TrendingDown size={8} />}
+            {Math.abs(total)}억
         </span>
     );
 };
@@ -222,6 +354,8 @@ const ThemeCard = ({ theme, showScore, onToggleDisplay }) => {
                         {theme.headline}
                     </div>
                 )}
+                {/* 테마 수급 요약 */}
+                <InvestorSummary investorSummary={theme.investorSummary} />
             </div>
             <div className="stock-list">
                 {theme.stocks.map((stock, index) => {
@@ -260,6 +394,7 @@ const ThemeCard = ({ theme, showScore, onToggleDisplay }) => {
                                     {stock.marketStatus && <NxtBadge marketStatus={stock.marketStatus} />}
                                     {stock.isLimit && <LimitBadge limitType={stock.limitType} limitText={stock.limitText} />}
                                     {stock.isVI && <VIBadge viType={stock.viType} viText={stock.viText} />}
+                                    {stock.investorData && <StockInvestorBadge investorData={stock.investorData} />}
                                     {isHotStock && !stock.isVI && !stock.isLimit && <span style={{ marginLeft: '4px', color: '#ffcc00' }}>🔥</span>}
                                 </span>
                                 <span className={`stock-rate ${stock.rate >= 0 ? 'positive' : 'negative'}`}>

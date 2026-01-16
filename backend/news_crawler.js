@@ -25,53 +25,221 @@ const NEWS_SOURCES = {
     }
 };
 
+// 뉴스 중요도 키워드 (가중치 포함)
+const IMPORTANCE_KEYWORDS = {
+    // 매우 중요 (가중치 5)
+    high: [
+        '상한가', '하한가', '급등', '급락', '폭등', '폭락',
+        '신고가', '52주', '역대', '사상최고', '최대',
+        '호실적', '어닝서프라이즈', '실적발표', '흑자전환',
+        '대규모계약', '수주', '수출', 'FDA승인', 'CE인증',
+        '인수합병', 'M&A', '지분투자', '전략적투자',
+        '외국인매수', '기관매수', '순매수'
+    ],
+    // 중요 (가중치 3)
+    medium: [
+        '상승', '강세', '주목', '관심',
+        '테마', '섹터', '업종', '대장주',
+        '공급계약', '납품', '수주잔고',
+        'MOU', '업무협약', '파트너십',
+        '신제품', '신사업', '진출',
+        '배당', '자사주', '무상증자'
+    ],
+    // 낮음 (가중치 1)
+    low: [
+        '전망', '예상', '분석', '리포트',
+        '추천', '목표가', 'TP',
+        '하락', '약세', '조정',
+        '시황', '마감', '개장'
+    ],
+    // 제외 (가중치 -5) - 광고성/노이즈
+    exclude: [
+        '광고', '후원', '이벤트', '프로모션',
+        '무료', '특별가', '할인',
+        '종목추천', '급등주추천', '적중',
+        'VIP', '유료', '카톡', '텔레그램'
+    ]
+};
+
+/**
+ * 뉴스 중요도 판정 (1-5점)
+ * @param {string} title - 뉴스 제목
+ * @returns {{score: number, reason: string}}
+ */
+function calculateNewsImportance(title) {
+    let score = 2; // 기본 점수
+    const reasons = [];
+
+    // 제외 키워드 체크
+    for (const keyword of IMPORTANCE_KEYWORDS.exclude) {
+        if (title.includes(keyword)) {
+            return { score: 0, reason: `광고성/노이즈 (${keyword})` };
+        }
+    }
+
+    // 높은 중요도 키워드
+    for (const keyword of IMPORTANCE_KEYWORDS.high) {
+        if (title.includes(keyword)) {
+            score += 2;
+            reasons.push(keyword);
+        }
+    }
+
+    // 중간 중요도 키워드
+    for (const keyword of IMPORTANCE_KEYWORDS.medium) {
+        if (title.includes(keyword)) {
+            score += 1;
+            reasons.push(keyword);
+        }
+    }
+
+    // 점수 제한 (1-5)
+    score = Math.min(Math.max(score, 1), 5);
+
+    return {
+        score,
+        reason: reasons.length > 0 ? reasons.slice(0, 3).join(', ') : '일반 뉴스'
+    };
+}
+
 // Pre-compute stock names for fast searching
 const ALL_STOCK_NAMES = Object.keys(stockCodeMap);
 
 /**
- * 다양한 뉴스 소스에서 뉴스 수집
+ * 다양한 뉴스 소스에서 뉴스 수집 (개선된 버전)
  */
 async function fetchDiverseNews() {
     console.log('Fetching news from diverse sources...');
 
     const allNews = [];
+    const axiosConfig = {
+        headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        },
+        timeout: 10000
+    };
 
-    // 이투데이 (현재 URL 404 - 추후 수정 필요)
-    // try {
-    //     const response = await axios.get(NEWS_SOURCES.etoday.url, {
-    //         headers: {
-    //             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-    //         },
-    //         timeout: 10000
-    //     });
-    //
-    //     const $ = cheerio.load(response.data);
-    //     $(NEWS_SOURCES.etoday.selector).each((i, el) => {
-    //         if (i >= 20) return; // 상위 20개만
-    //
-    //         const title = $(el).text().trim();
-    //         const href = $(el).attr('href');
-    //
-    //         if (title && href) {
-    //             const fullUrl = href.startsWith('http') ? href : `https://www.etoday.co.kr${href}`;
-    //             allNews.push({
-    //                 source: 'etoday',
-    //                 title,
-    //                 link: fullUrl
-    //             });
-    //         }
-    //     });
-    //     console.log(`  이투데이: ${allNews.filter(n => n.source === 'etoday').length}개`);
-    // } catch (error) {
-    //     console.error('  이투데이 크롤링 실패:', error.message);
-    // }
+    // 1. 한국경제 증권 뉴스
+    try {
+        const response = await axios.get('https://www.hankyung.com/finance/stock', axiosConfig);
+        const $ = cheerio.load(response.data);
 
-    console.log(`  Diverse news sources: ${allNews.length}개 (이투데이 temporarily disabled)`);
+        $('.news-tit, .article-title, .news-list a').each((i, el) => {
+            if (i >= 15) return;
 
-    // 한국경제 (시간 관계상 스킵 가능)
-    // ... 추가 구현
+            const title = $(el).text().trim();
+            const href = $(el).attr('href');
 
-    return allNews;
+            if (title && title.length > 10 && href) {
+                const fullUrl = href.startsWith('http') ? href : `https://www.hankyung.com${href}`;
+                const importance = calculateNewsImportance(title);
+
+                if (importance.score > 0) {
+                    allNews.push({
+                        source: 'hankyung',
+                        title,
+                        link: fullUrl,
+                        importance: importance.score,
+                        importanceReason: importance.reason
+                    });
+                }
+            }
+        });
+        console.log(`  한국경제: ${allNews.filter(n => n.source === 'hankyung').length}개`);
+    } catch (error) {
+        console.warn('  한국경제 크롤링 실패 (non-critical):', error.message);
+    }
+
+    // 2. 매일경제 증권 뉴스
+    try {
+        const response = await axios.get('https://stock.mk.co.kr/news', axiosConfig);
+        const $ = cheerio.load(response.data);
+
+        $('a.news_item, .news_ttl a, .news-list a').each((i, el) => {
+            if (i >= 15) return;
+
+            const title = $(el).text().trim();
+            const href = $(el).attr('href');
+
+            if (title && title.length > 10 && href) {
+                const fullUrl = href.startsWith('http') ? href : `https://www.mk.co.kr${href}`;
+                const importance = calculateNewsImportance(title);
+
+                if (importance.score > 0) {
+                    allNews.push({
+                        source: 'mk',
+                        title,
+                        link: fullUrl,
+                        importance: importance.score,
+                        importanceReason: importance.reason
+                    });
+                }
+            }
+        });
+        console.log(`  매일경제: ${allNews.filter(n => n.source === 'mk').length}개`);
+    } catch (error) {
+        console.warn('  매일경제 크롤링 실패 (non-critical):', error.message);
+    }
+
+    // 3. 서울경제 증권 뉴스
+    try {
+        const response = await axios.get('https://www.sedaily.com/NewsListA/GB', axiosConfig);
+        const $ = cheerio.load(response.data);
+
+        $('.sub_news_list a, .news_list a').each((i, el) => {
+            if (i >= 10) return;
+
+            const title = $(el).text().trim();
+            const href = $(el).attr('href');
+
+            if (title && title.length > 10 && href) {
+                const fullUrl = href.startsWith('http') ? href : `https://www.sedaily.com${href}`;
+                const importance = calculateNewsImportance(title);
+
+                if (importance.score > 0) {
+                    allNews.push({
+                        source: 'sedaily',
+                        title,
+                        link: fullUrl,
+                        importance: importance.score,
+                        importanceReason: importance.reason
+                    });
+                }
+            }
+        });
+        console.log(`  서울경제: ${allNews.filter(n => n.source === 'sedaily').length}개`);
+    } catch (error) {
+        console.warn('  서울경제 크롤링 실패 (non-critical):', error.message);
+    }
+
+    // 중복 제거 (제목 기준)
+    const seen = new Set();
+    const uniqueNews = allNews.filter(news => {
+        const key = news.title.replace(/\s+/g, '').substring(0, 30);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+
+    // 중요도 순 정렬
+    uniqueNews.sort((a, b) => (b.importance || 2) - (a.importance || 2));
+
+    console.log(`  Diverse news total: ${uniqueNews.length}개 (중복제거 후)`);
+
+    return uniqueNews;
+}
+
+/**
+ * 뉴스 필터링 (중요도 기준)
+ * @param {Array} newsList - 뉴스 리스트
+ * @param {number} minImportance - 최소 중요도 (default: 2)
+ * @returns {Array} 필터링된 뉴스
+ */
+function filterNewsByImportance(newsList, minImportance = 2) {
+    return newsList.filter(news => {
+        const importance = news.importance || calculateNewsImportance(news.title).score;
+        return importance >= minImportance;
+    });
 }
 
 /**
@@ -233,5 +401,7 @@ async function fetchStocksFromNews(newsList) {
 module.exports = {
     fetchDiverseNews,
     extractStocksFromNews,
-    fetchStocksFromNews
+    fetchStocksFromNews,
+    calculateNewsImportance,
+    filterNewsByImportance
 };

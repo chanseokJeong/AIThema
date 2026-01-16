@@ -15,6 +15,7 @@ const { selectFinalThemes } = require('./theme_selector');
 const { convertNaverToThemes, mergeThemes } = require('./theme_merger');
 const { groupThemes, generateThemeSummary } = require('./theme_grouper');
 const { getMarketStatus: getNxtMarketStatus } = require('./naver_api');
+const { getBulkInvestorData, calculateSupplyScore, calculateShortRisk } = require('./investor');
 
 // ===== 로그 파일 설정 =====
 const LOG_DIR = path.join(__dirname, 'logs');
@@ -351,6 +352,59 @@ async function updateThemes() {
             };
         }));
 
+        // Step 4.5: ⭐ NEW - 수급 데이터 수집 (외국인/기관 순매수, 공매도)
+        console.log('Step 4.5: Fetching investor data (supply/demand)...');
+        try {
+            // 모든 테마의 종목 코드 수집
+            const allStockCodes = [];
+            const codeToStockMap = new Map();
+
+            enrichedThemes.forEach(theme => {
+                theme.stocks.forEach(stock => {
+                    if (stock.code && !codeToStockMap.has(stock.code)) {
+                        allStockCodes.push(stock.code);
+                        codeToStockMap.set(stock.code, stock);
+                    }
+                });
+            });
+
+            console.log(`  Fetching investor data for ${allStockCodes.length} stocks...`);
+
+            // 일괄 수급 데이터 조회
+            const investorDataList = await getBulkInvestorData(allStockCodes);
+
+            // 종목에 수급 데이터 병합
+            let enrichedCount = 0;
+            investorDataList.forEach(data => {
+                if (data && data.code) {
+                    const stock = codeToStockMap.get(data.code);
+                    if (stock) {
+                        stock.investorData = data;
+                        enrichedCount++;
+                    }
+                }
+            });
+
+            console.log(`  Investor data enriched: ${enrichedCount}/${allStockCodes.length} stocks`);
+
+            // 테마별 점수 재계산 (수급 보너스 포함)
+            enrichedThemes.forEach(theme => {
+                const scoreResult = calculateThemeScore(theme.stocks, true);
+                if (typeof scoreResult === 'object') {
+                    theme.score = scoreResult.score;
+                    theme.baseScore = scoreResult.baseScore;
+                    theme.supplyBonus = scoreResult.supplyBonus;
+                    theme.shortPenalty = scoreResult.shortPenalty;
+                }
+
+                // 테마 수준의 수급 요약 계산
+                const investorSummary = calculateThemeInvestorSummary(theme.stocks);
+                theme.investorSummary = investorSummary;
+            });
+        } catch (investorError) {
+            console.warn('Investor data fetch failed (non-critical):', investorError.message);
+        }
+
         // Step 5.5: ⭐ 테마 그룹핑 (유사 테마 통합 + 재벌 그룹 감지)
         console.log('Step 5.5: Grouping similar themes...');
         const groupedThemes = groupThemes(enrichedThemes, 15); // 최대 15개로 압축
@@ -644,12 +698,15 @@ async function addMissingMajorThemes(analyzedThemes, balancedHotStocks) {
     return [...analyzedThemes, ...missingThemes];
 }
 
-// 테마 점수 계산 함수 (거래대금 가중 평균 등락률)
-function calculateThemeScore(stocks) {
-    if (stocks.length === 0) return 0;
+// 테마 점수 계산 함수 (거래대금 가중 평균 등락률 + 수급 보너스)
+function calculateThemeScore(stocks, includeSupplyBonus = false) {
+    if (stocks.length === 0) return { score: 0, supplyBonus: 0, shortPenalty: 0 };
 
     let totalWeightedRate = 0;
     let totalVolume = 0;
+    let totalSupplyScore = 0;
+    let totalShortRisk = 0;
+    let stocksWithInvestorData = 0;
 
     for (const stock of stocks) {
         const rate = stock.rate || 0;
@@ -658,15 +715,109 @@ function calculateThemeScore(stocks) {
 
         totalWeightedRate += rate * amount;
         totalVolume += amount;
+
+        // 수급 데이터가 있으면 집계
+        if (stock.investorData) {
+            totalSupplyScore += calculateSupplyScore(stock.investorData);
+            totalShortRisk += calculateShortRisk(stock.investorData);
+            stocksWithInvestorData++;
+        }
     }
 
     // 거래대금 총합이 0이면 (모두 데이터 없음 등) 단순 평균으로 계산
+    let baseScore;
     if (totalVolume === 0) {
         const totalRate = stocks.reduce((sum, s) => sum + (s.rate || 0), 0);
-        return totalRate / stocks.length;
+        baseScore = totalRate / stocks.length;
+    } else {
+        baseScore = totalWeightedRate / totalVolume;
     }
 
-    return totalWeightedRate / totalVolume;
+    // 수급 보너스/패널티 계산 (평균)
+    let supplyBonus = 0;
+    let shortPenalty = 0;
+
+    if (includeSupplyBonus && stocksWithInvestorData > 0) {
+        const avgSupplyScore = totalSupplyScore / stocksWithInvestorData;
+        const avgShortRisk = totalShortRisk / stocksWithInvestorData;
+
+        // 수급 보너스: -2 ~ +2 범위의 점수를 -1 ~ +1 스케일로 변환
+        supplyBonus = avgSupplyScore * 0.5;  // 최대 ±1점
+
+        // 공매도 패널티: 0 ~ 3 범위를 0 ~ 0.5 스케일로 변환
+        shortPenalty = avgShortRisk * 0.15;  // 최대 0.45점 감점
+    }
+
+    // 최종 점수 = 기본 점수 + 수급 보너스 - 공매도 패널티
+    const finalScore = baseScore + supplyBonus - shortPenalty;
+
+    // 하위 호환성: 단순 숫자 반환이 필요한 경우
+    if (!includeSupplyBonus) {
+        return baseScore;
+    }
+
+    return {
+        score: finalScore,
+        baseScore,
+        supplyBonus,
+        shortPenalty
+    };
+}
+
+// 테마 수준의 수급 요약 계산
+function calculateThemeInvestorSummary(stocks) {
+    let foreignNetTotal = 0;
+    let institutionNetTotal = 0;
+    let retailNetTotal = 0;
+    let shortRatioSum = 0;
+    let stocksWithData = 0;
+
+    for (const stock of stocks) {
+        const investorData = stock.investorData;
+        if (!investorData) continue;
+
+        const investor = investorData.investor;
+        const short = investorData.short;
+
+        if (investor) {
+            foreignNetTotal += investor.foreignNet || 0;
+            institutionNetTotal += investor.institutionNet || 0;
+            retailNetTotal += investor.retailNet || 0;
+            stocksWithData++;
+        }
+
+        if (short) {
+            shortRatioSum += short.shortRatio || 0;
+        }
+    }
+
+    const avgShortRatio = stocksWithData > 0 ? shortRatioSum / stocksWithData : 0;
+
+    // 외국인+기관 순매수 합계
+    const bigPlayerNet = foreignNetTotal + institutionNetTotal;
+
+    // 수급 신호 판정 (외국인+기관 기준)
+    let supplySignal = 'NEUTRAL';
+    if (bigPlayerNet >= 50) supplySignal = 'BUY';       // 50억 이상 순매수
+    else if (bigPlayerNet >= 20) supplySignal = 'MILD_BUY';
+    else if (bigPlayerNet <= -50) supplySignal = 'SELL';   // 50억 이상 순매도
+    else if (bigPlayerNet <= -20) supplySignal = 'MILD_SELL';
+
+    // 공매도 위험 신호
+    let shortSignal = 'NORMAL';
+    if (avgShortRatio >= 15) shortSignal = 'HIGH_RISK';
+    else if (avgShortRatio >= 10) shortSignal = 'CAUTION';
+
+    return {
+        foreignNet: foreignNetTotal,        // 외국인 순매수 합계 (억원)
+        institutionNet: institutionNetTotal, // 기관 순매수 합계 (억원)
+        retailNet: retailNetTotal,          // 개인 순매수 합계 (억원)
+        bigPlayerNet,                       // 외국인+기관 (억원)
+        avgShortRatio: Math.round(avgShortRatio * 100) / 100, // 평균 공매도비중 (%)
+        supplySignal,                       // BUY, MILD_BUY, NEUTRAL, MILD_SELL, SELL
+        shortSignal,                        // NORMAL, CAUTION, HIGH_RISK
+        dataCount: stocksWithData           // 데이터 수집 종목 수
+    };
 }
 
 // ===== 별 등급 시스템 (주도주 판정) =====
